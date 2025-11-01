@@ -1,0 +1,352 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.IO;
+using System.Threading.Tasks;
+using UnityEngine;
+using UnityEngine.Events;
+
+public enum BallType : byte
+{
+    Solid = 0, Stripes = 1, Cue, Ball8, NIL
+}
+public class SnookManager : MonoBehaviour
+{
+    public GameObject potSpawn;
+
+    BallType[] turnType = new BallType[2] { BallType.NIL, BallType.NIL };
+    int[] pottedBallCount = new int[2];
+    int turn;
+
+    [SerializeField] Ball[] balls;
+    public UnityAction CueReset;
+    public Action<int> OnTurnChange;
+    public Action<int> OnGameEnd;
+    public Action<(byte player, byte type)> OnAssign;
+    public Action<bool, float> OnSlam;
+
+#if SERVER
+    static Vector3[] _balls;
+    public Vector3[] GetBalls
+    {
+        get
+        {
+            if (_balls == null)
+            {
+                _balls = new Vector3[15];
+            }
+            for (int i = 0; i < 15; i++)
+            {
+                _balls[i] = balls[i].transform.position;
+            }
+            return _balls;
+        }
+    }
+
+    void Start()
+    {
+
+        foreach (var item in balls)
+        {
+            item.OnSlam += (flag, speed) =>
+            {
+                OnSlam?.Invoke(flag, speed);
+            };
+        }
+    }
+
+    public void Push(int index, Vector2 dir)
+    {
+        balls[index].Push(dir);
+    }
+
+#endif
+
+    void Update()
+    {
+        // TickTimer();
+    }
+
+    void Next()
+    {
+        turn = 1 - turn;
+        OnTurnChange?.Invoke(turn);
+    }
+
+    public void SetTurn(int _turn)
+    {
+        turn = _turn;
+        OnTurnChange?.Invoke(turn);
+    }
+
+    public int GetTurn() => turn;
+
+    int GetStopped()
+    {
+        int stopped = 0;
+        foreach (var item in balls)
+        {
+            if (item.speed < 0.05)
+            {
+                if (item is Cueball)
+                {
+                    if (Mathf.Abs(((Cueball)item).getSpin) < 0.0001f)
+                    {
+                        stopped++;
+                    }
+                }
+                else
+                {
+                    stopped++;
+                }
+            }
+        }
+        return stopped;
+    }
+
+    public TaskCompletionSource<bool> allBallsStopped;
+    public async void ScatterBalls()
+    {
+        PauseTimer();
+        foul = false;
+        turnPottedSelf = 0;
+        turnPottedTotal = 0;
+        turnCushion = 0;
+        firstHit = BallType.NIL;
+        allBallsStopped = new TaskCompletionSource<bool>();
+        while (GetStopped() < balls.Length) await Task.Delay(16);
+        allBallsStopped.TrySetResult(true);
+        CheckTurnEvents();
+        ResetTimers();
+        StartTimer();
+    }
+
+    float[] timer = { 30, 30 };
+    bool timerRunning = true;
+    void ResetTimers()
+    {
+        timer[0] = 30;
+        timer[1] = 30;
+    }
+
+    void StartTimer()
+    {
+        timerRunning = true;
+    }
+
+    void PauseTimer()
+    {
+        timerRunning = false;
+    }
+
+    public void TickTimer()
+    {
+        if (!timerRunning) return;
+        timer[turn] -= Time.deltaTime;
+        if (timer[turn] <= 0)
+        {
+            Next();
+            ResetTimers();
+        }
+    }
+
+    public float[] GetTimerValues => timer;
+
+    bool foul = false;
+    int turnCushion = 0;
+    int turnPottedSelf = 0;
+    int turnPottedTotal = 0;
+    BallType firstHit = BallType.NIL;
+    int potted;
+    public void RegisterPot(Ball ball)
+    {
+        var type = ball.type;
+        if (type == BallType.Cue || type == BallType.Ball8)
+        {
+            if (type == BallType.Cue)
+            {
+                RegisterFoul();//scratch
+            }
+            if (type == BallType.Ball8)
+            {
+                if (turnType[turn] != BallType.Ball8)
+                {
+                    Debug.Log($"Player{turn} lost");
+                    //turn loses
+                    OnGameEnd?.Invoke(1 - turn);
+                }
+                else
+                {
+                    if (type == firstHit)
+                    {
+                        Debug.Log($"Player{turn} wins");
+                        OnGameEnd?.Invoke(turn);
+                    }
+                    else
+                    {
+                        Debug.Log($"Player{turn} lost");
+                        OnGameEnd?.Invoke(1 - turn);
+                    }
+                }
+            }
+            return;
+        }
+
+        if (potted == 0)
+        {
+            turnType[turn] = type;
+            turnType[1 - turn] = (BallType)(1 - (int)type);
+            Debug.Log($"Player {turn} is {type}");
+            OnAssign?.Invoke(((byte)turn, (byte)type));
+        }
+
+        pottedBallCount[(int)type]++;
+        potted++;
+        if (type == turnType[turn]) turnPottedSelf++;
+        turnPottedTotal++;
+
+        if (turnType[turn] != BallType.Ball8 && pottedBallCount[(int)turnType[turn]] == 7)
+        {
+            turnType[turn] = BallType.Ball8;
+        }
+
+        if (turnType[1 - turn] != BallType.Ball8 && pottedBallCount[(int)turnType[1 - turn]] == 7)
+        {
+            turnType[1 - turn] = BallType.Ball8;
+        }
+    }
+
+    public void RegisterCushion()
+    {
+        turnCushion++;
+    }
+
+    public void RegisterFoul()
+    {
+        foul = true;
+    }
+
+    public void CheckFirstHit(BallType type)
+    {
+        Debug.Log($"first hit is {type}");
+        firstHit = type;
+        if (type != turnType[turn] && turnType[turn] != BallType.NIL)
+        {
+            RegisterFoul();
+        }
+    }
+
+    void InHand()
+    {
+        CueReset.Invoke();
+        Next();
+    }
+
+    void CheckTurnEvents()
+    {
+        if (firstHit == BallType.NIL)
+            RegisterFoul();
+
+        if (foul)
+        {
+            InHand();
+        }
+        else
+        {
+            if (turnPottedSelf > 0)
+            {
+                OnTurnChange?.Invoke(turn);
+            }
+            else
+            {
+                if (turnCushion == 0)
+                {
+                    //foulf
+                    InHand();
+                }
+                else
+                {
+                    Next();
+                }
+            }
+        }
+    }
+
+    public BallType PreferredBallType => turnType[turn];
+    public BallType AIBallType => turnType[1];
+
+    public void SetTimerValues(float[] times)
+    {
+        timer = times;
+    }
+
+    void OnGUI()
+    {
+        // GUI.Label(new Rect(Screen.width / 2, 0, 100, 50), $"Player{turn}:{turnType[turn]}");
+    }
+
+    public byte[] GetBallsViewData()
+    {
+        using (MemoryStream stream = new MemoryStream())
+        using (BinaryWriter binaryWriter = new BinaryWriter(stream))
+        {
+            for (int i = 0; i < balls.Length; i++)
+            {
+                var data = balls[i].ballViewData;
+                binaryWriter.Write(data.velocity.x);
+                binaryWriter.Write(data.velocity.y);
+                binaryWriter.Write(data.velocity.z);
+                binaryWriter.Write(data.position.x);
+                binaryWriter.Write(data.position.y);
+                binaryWriter.Write(data.position.z);
+            }
+            return stream.ToArray();
+        }
+    }
+
+    public void SetBallsFromView(byte[] rawData)
+    {
+        using (MemoryStream stream = new MemoryStream(rawData))
+        using (BinaryReader binaryReader = new BinaryReader(stream))
+        {
+            for (int i = 0; i < balls.Length; i++)
+            {
+                float vx = binaryReader.ReadSingle();
+                float vy = binaryReader.ReadSingle();
+                float vz = binaryReader.ReadSingle();
+                float px = binaryReader.ReadSingle();
+                float py = binaryReader.ReadSingle();
+                float pz = binaryReader.ReadSingle();
+
+                balls[i].SetBallFromViewData(new Vector3(vx, vy, vz), new Vector3(px, py, pz));
+            }
+        }
+    }
+
+    public byte[] GetState()
+    {
+        using (MemoryStream stream = new MemoryStream())
+        using (BinaryWriter writer = new BinaryWriter(stream))
+        {
+            writer.Write((byte)turnType[0]);
+            writer.Write((byte)turnType[1]);
+            writer.Write((byte)pottedBallCount[0]);
+            writer.Write((byte)pottedBallCount[1]);
+            writer.Write((byte)turn);
+            return stream.ToArray();
+        }
+    }
+
+    public void SetState(byte[] data)
+    {
+        using (MemoryStream stream = new MemoryStream(data))
+        using (BinaryReader reader = new BinaryReader(stream))
+        {
+            turnType[0] = (BallType)reader.ReadByte();
+            turnType[1] = (BallType)reader.ReadByte();
+            pottedBallCount[0] = reader.ReadByte();
+            pottedBallCount[1] = reader.ReadByte();
+            SetTurn(reader.ReadByte());
+        }
+    }
+}

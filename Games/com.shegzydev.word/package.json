@@ -1,0 +1,9 @@
+{
+  "name": "com.shegzydev.word",
+  "displayName": "Word",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Reusable word Game",
+  "author": { "name": "shegzydev", "email": "oluabesegun@gmail.com" },
+  "com.yourname.yourlib": ""
+}

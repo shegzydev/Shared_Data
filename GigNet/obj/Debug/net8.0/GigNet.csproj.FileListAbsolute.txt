@@ -1,0 +1,16 @@
+D:\C#\GigNet\bin\Debug\net8.0\GigNet.deps.json
+D:\C#\GigNet\bin\Debug\net8.0\GigNet.dll
+D:\C#\GigNet\bin\Debug\net8.0\GigNet.pdb
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.GeneratedMSBuildEditorConfig.editorconfig
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.AssemblyInfoInputs.cache
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.AssemblyInfo.cs
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.csproj.CoreCompileInputs.cache
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.dll
+D:\C#\GigNet\obj\Debug\net8.0\refint\GigNet.dll
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.pdb
+D:\C#\GigNet\obj\Debug\net8.0\ref\GigNet.dll
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.csproj.AssemblyReference.cache
+D:\C#\GigNet\bin\Debug\net8.0\Newtonsoft.Json.dll
+D:\C#\GigNet\bin\Debug\net8.0\UnityEngine.dll
+D:\C#\GigNet\bin\Debug\net8.0\UnityEngine.xml
+D:\C#\GigNet\obj\Debug\net8.0\GigNet.csproj.Up2Date

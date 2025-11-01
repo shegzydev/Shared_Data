@@ -1,0 +1,9 @@
+{
+  "name": "com.shegzydev.whot",
+  "displayName": "Whot",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Reusable whot Game",
+  "author": { "name": "shegzydev", "email": "oluabesegun@gmail.com" },
+  "com.yourname.yourlib": ""
+}
