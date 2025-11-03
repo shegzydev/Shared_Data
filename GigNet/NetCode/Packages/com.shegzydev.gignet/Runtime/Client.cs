@@ -6,8 +6,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-using UnityEngine;
-using NativeWebSocket;
+//using NativeWebSocket;
 using System.Collections.Concurrent;
 using System.Linq;
 using SimpleJSON;
@@ -36,7 +35,7 @@ internal class Client : Agent
     private Thread tcpReceiveThread;
 
     //WS
-    private WebSocket wsClient;
+    private SimpleWebSocket wsClient;
 
     static RPCRouter rpcRouter;
     string serverIP;
@@ -53,7 +52,7 @@ internal class Client : Agent
     public override void Tick()
     {
 #if !UNITY_WEBGL || UNITY_EDITOR
-        wsClient?.DispatchMessageQueue();
+        // wsClient?.DispatchMessageQueue();
 #endif
         while (actionQueue.TryDequeue(out Action action))
         {
@@ -76,12 +75,11 @@ internal class Client : Agent
 
         // StartClientUDPConnection();
 #if UNITY_WEBGL
-        StartClientWSConnection();
+        StartClientWSConnection(serverIP);
 #else
         StartClientTCPConnection();
-#endif
-        // StartClientWSConnection();
         if (enableAudio) StartClientAudioConnection();
+#endif
     }
 
     void StartClientUDPConnection()
@@ -96,11 +94,11 @@ internal class Client : Agent
 
             SendUDPMessage(BitConverter.GetBytes(-1));
 
-            Debug.Log($"UDP Receiver started on {serverIP}:{port}");
+            GigNet.Log?.Invoke($"UDP Receiver started on {serverIP}:{port}");
         }
         catch (Exception ex)
         {
-            Debug.LogError($"UDP connection failed: {ex.Message}");
+            GigNet.LogError?.Invoke($"UDP connection failed: {ex.Message}");
         }
     }
 
@@ -120,29 +118,29 @@ internal class Client : Agent
             OnConnected?.Invoke();
 
             connection = Connection.TCP;
-            Debug.Log($"TCP Connected to {serverIP}:{port}");
+            GigNet.Log?.Invoke($"TCP Connected to {serverIP}:{port}");
         }
         catch (Exception ex)
         {
-            Debug.LogError($"TCP connection failed: {ex.Message}");
+            GigNet.LogError?.Invoke($"TCP connection failed: {ex.Message}");
             //AttemptTCPReconnect();
         }
     }
 
     bool connecting;
-    async void StartClientWSConnection()
+    async void StartClientWSConnection(string url)
     {
         try
         {
             if (connecting) return;
             connecting = true;
 
-            if (!string.IsNullOrEmpty(Application.absoluteURL))
+            if (!string.IsNullOrEmpty(url))
             {
-                Uri uri = new Uri(Application.absoluteURL);
+                Uri uri = new Uri(url);
                 string host = uri.Host;
 
-                Debug.Log("Host: " + host);
+                GigNet.Log?.Invoke("Host: " + host);
 
                 if (string.IsNullOrEmpty(host))
                 {
@@ -151,19 +149,20 @@ internal class Client : Agent
 
                 serverIP = host;
             }
-            Debug.Log($"using host {serverIP}");
+            GigNet.Log?.Invoke($"using host {serverIP}");
 
 #if UNITY_EDITOR
-            wsClient = new WebSocket($"ws://{serverIP}:{port + 6}");
+            wsClient = new SimpleWebSocket($"ws://{serverIP}:{port + 6}");
 #else
-            wsClient = new WebSocket($"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
+            //wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port + 6}");
+            wsClient = new SimpleWebSocket($"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
 #endif
 
             wsClient.OnOpen += () =>
             {
                 OnConnected?.Invoke();
                 connection = Connection.WS;
-                Debug.Log("✅ Connected to server!");
+                GigNet.Log?.Invoke("✅ Connected to server!");
                 connecting = false;
             };
 
@@ -181,31 +180,31 @@ internal class Client : Agent
             wsClient.OnError += (err) =>
             {
                 connecting = false;
-                Debug.LogError($"❌ Error: {err}");
+                GigNet.LogError?.Invoke($"❌ Error: {err}");
                 try
                 {
-                    wsClient?.Close();
+                    wsClient?.CloseAsync(1006, "abnormal");
                 }
                 catch { }
             };
 
-            wsClient.OnClose += (e) =>
+            wsClient.OnClose += (code, message) =>
             {
-                Debug.Log($"🔌 Disconnected.{e.ToString("g")}");
+                GigNet.Log?.Invoke($"🔌 Disconnected.{message}");
                 wsClient = null;
 
-                if (e != WebSocketCloseCode.Normal && Application.isPlaying)
+                if (code != 1000)
                 {
-                    Debug.Log("Reconnecting...");
-                    StartClientWSConnection();
+                    GigNet.Log?.Invoke("Reconnecting...");
+                    StartClientWSConnection(url);
                 }
             };
 
-            await wsClient.Connect();
+            await wsClient.ConnectAsync();
         }
         catch (Exception ex)
         {
-            Debug.LogError($"WS connection failed: {ex.Message}");
+            GigNet.LogError?.Invoke($"WS connection failed: {ex.Message}");
         }
     }
 
@@ -219,7 +218,7 @@ internal class Client : Agent
 #if !UNITY_WEBGL
         GigNetVoice.Instance.OnEncoded += SendAudio;
 #endif
-        Debug.Log($"UDP Receiver started on {serverIP}:{port + 1}");
+        GigNet.Log?.Invoke($"UDP Receiver started on {serverIP}:{port + 1}");
     }
 
     //==================UDP======================//
@@ -275,7 +274,7 @@ internal class Client : Agent
             }
             catch (Exception e)
             {
-                Debug.LogError($"UDP receive error: {e.Message}");
+                GigNet.LogError?.Invoke($"UDP receive error: {e.Message}");
                 //break;
             }
         }
@@ -310,7 +309,7 @@ internal class Client : Agent
             }
             catch (Exception e)
             {
-                Debug.LogError($"UDP receive error: {e.Message} : {e.InnerException}");
+                GigNet.LogError?.Invoke($"UDP receive error: {e.Message} : {e.InnerException}");
             }
         }
     }
@@ -319,19 +318,19 @@ internal class Client : Agent
     {
         if (connection == Connection.WS)
         {
-            if (wsClient != null && wsClient.State == WebSocketState.Open)
+            if (wsClient != null && wsClient.State == System.Net.WebSockets.WebSocketState.Open)
             {
                 try
                 {
-                    wsClient.Send(data);
+                    wsClient.SendAsync(data);
                     OutGoingData += data.Length;
                 }
                 catch (Exception ex)
                 {
-                    Debug.LogError($"WS Send Error:{ex};{ex.Message}");
+                    GigNet.LogError?.Invoke($"WS Send Error:{ex};{ex.Message}");
                     try
                     {
-                        wsClient?.Close();
+                        wsClient?.CloseAsync();
                         wsClient = null;
                     }
                     catch { }
@@ -349,7 +348,7 @@ internal class Client : Agent
                 }
                 catch (IOException ex)
                 {
-                    Debug.LogError($"TCP send error:{ex};{ex.Message}");
+                    GigNet.LogError?.Invoke($"TCP send error:{ex};{ex.Message}");
                     AttemptTCPReconnect();
                 }
             }
@@ -359,7 +358,7 @@ internal class Client : Agent
     //=================TCP======================//
     private void TCPReceiveLoop()
     {
-        Debug.Log("Receiving TCP Data");
+        GigNet.Log?.Invoke("Receiving TCP Data");
 
         byte[] buffer = new byte[4];
         while (running)
@@ -382,10 +381,10 @@ internal class Client : Agent
             }
             catch (Exception e)
             {
-                Debug.LogError($"TCP receive error: {e.Message}");
+                GigNet.LogError?.Invoke($"TCP receive error: {e.Message}");
                 if (e.InnerException != null)
                 {
-                    Debug.LogError($"Inner: {e.InnerException.Message}");
+                    GigNet.LogError?.Invoke($"Inner: {e.InnerException.Message}");
                 }
                 break;
             }
@@ -413,12 +412,12 @@ internal class Client : Agent
         try { tcpClient?.Close(); } catch { }
         try
         {
-            Debug.Log("Attempting TCP reconnect...");
+            GigNet.Log?.Invoke("Attempting TCP reconnect...");
             tcpClient = new TcpClient();
             await tcpClient.ConnectAsync(serverIP, port);
             tcpStream = tcpClient.GetStream();
 
-            Debug.Log("TCP reconnected!");
+            GigNet.Log?.Invoke("TCP reconnected!");
             tcpReceiveThread = new Thread(TCPReceiveLoop) { IsBackground = true };
             tcpReceiveThread.Start();
 
@@ -426,7 +425,7 @@ internal class Client : Agent
         }
         catch
         {
-            Debug.LogWarning("TCP reconnect failed. Retrying in 3 seconds...");
+            GigNet.LogWarning?.Invoke("TCP reconnect failed. Retrying in 3 seconds...");
             await Task.Delay(3000);
             AttemptTCPReconnect();
         }
@@ -457,7 +456,7 @@ internal class Client : Agent
                     session = BitConverter.ToInt64(payload, 12);
                     actionQueue.Enqueue(() =>
                     {
-                        Debug.Log($"Received session {session} from server");
+                        GigNet.Log?.Invoke($"Received session {session} from server");
                         OnReceivedID?.Invoke(id);
                     });
                     break;
@@ -490,6 +489,7 @@ internal class Client : Agent
                     var sendTime = BitConverter.ToInt64(payload, 4);
                     var ReceiveTime = DateTimeOffset.UtcNow.Ticks;
                     NetworkManager.ms = (int)((ReceiveTime - sendTime) / TimeSpan.TicksPerMillisecond);
+                    GigNet.ping = (int)((ReceiveTime - sendTime) / TimeSpan.TicksPerMillisecond);
                     receivedHeartbeat = true;
                     break;
                 }
@@ -510,7 +510,7 @@ internal class Client : Agent
         try { tcpClient?.Close(); } catch { }
         try
         {
-            wsClient?.Close();
+            wsClient?.CloseAsync();
             wsClient = null;
         }
         catch

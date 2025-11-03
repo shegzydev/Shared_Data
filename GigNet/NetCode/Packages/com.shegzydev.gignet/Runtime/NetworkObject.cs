@@ -2,34 +2,32 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
-using UnityEngine;
 using System.IO;
 
-public abstract class NetworkObject : MonoBehaviour
+public interface NetworkObject
 {
-    public int ObjectId;
-    public int OwnerID;
-    private Dictionary<string, MethodInfo> _rpcMethods = new();
-    public bool isOwner;
+    public string name { get; set; }
+    public int ObjectId { get; set; }
+    public int OwnerID {  get; set; }
+    public Dictionary<string, MethodInfo> _rpcMethods { get; set; }
+    public bool isOwner {  get; set; }
 
-    public void Init()
+    public void Init(string name)
     {
-
-    }
-
-    void Awake()
-    {
-        Init();
+        name = name.ToLower();
     }
 
     internal void Register()
     {
+        if (_rpcMethods == null) _rpcMethods = new Dictionary<string, MethodInfo>();
         NetworkManager.Instance?.RegObject(this);
         RegisterAllRpcMethods();
     }
 
     private void RegisterAllRpcMethods()
     {
+        if (string.IsNullOrEmpty(name)) throw new Exception("Network Object Has No Name");
+
         var methods = GetType().GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
         foreach (var m in methods)
@@ -37,13 +35,15 @@ public abstract class NetworkObject : MonoBehaviour
             if (m.GetCustomAttribute<RpcAttribute>() != null)
             {
                 _rpcMethods[m.Name] = m;
-                Debug.Log($"[RPC] Registered {m.Name} on object {ObjectId}");
+                GigNet.Log?.Invoke($"[RPC] Registered {m.Name} on object {ObjectId}");
             }
         }
     }
 
     internal void HandleRpc(string methodName, byte[] payload)
     {
+        if (string.IsNullOrEmpty(name)) throw new Exception("Network Object Has No Name");
+
         if (_rpcMethods.TryGetValue(methodName, out var method))
         {
             var parameters = method.GetParameters();
@@ -161,13 +161,17 @@ public abstract class NetworkObject : MonoBehaviour
 
     protected void Destroy()
     {
+        if (string.IsNullOrEmpty(name)) throw new Exception("Network Object Has No Name");
+
         if (!NetworkManager.Instance.isServer) return;
         SendRPC(TransferProtocol.TCP, TargetGroup.All, nameof(NetDestroy));
-        Destroy(gameObject);
+        OnDestroy?.Invoke(name);
     }
 
     void NetDestroy()
     {
-        Destroy(gameObject);
+        OnDestroy?.Invoke(name);
     }
+
+    public Action<string> OnDestroy { get; set; }
 }

@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text;
-using UnityEngine;
 
 [AttributeUsage(AttributeTargets.Method)]
 public class RpcAttribute : Attribute
@@ -40,12 +39,12 @@ internal class RPCRouter
             }
             else
             {
-                Debug.Log($"Unknown object {objectId}");
+                GigNet.Log?.Invoke($"Unknown object {objectId}");
             }
         }
         catch (TargetInvocationException e)
         {
-            Debug.LogError($"Captured Exception {e.InnerException.Message}:{e.InnerException.InnerException.Message}:{e.InnerException.InnerException.InnerException.Message}");
+            GigNet.LogError?.Invoke($"Captured Exception {e.InnerException.Message}:{e.InnerException.InnerException.Message}:{e.InnerException.InnerException.InnerException.Message}");
         }
     }
 }

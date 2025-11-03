@@ -1,4 +1,4 @@
-using System;
+/*using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text;
@@ -82,4 +82,151 @@ internal class SimpleWebRequest
             return sb.ToString();
         }
     }
+}*/
+
+#if SERVER
+using System;
+using System.Collections.Generic;
+using System.Net.Http;
+using System.Text;
+using System.Threading.Tasks;
+using System.Security.Cryptography;
+
+using HEADER = System.Collections.Generic.Dictionary<string, string>;
+using Newtonsoft.Json;
+
+internal static class SimpleWebRequest
+{
+    private static readonly HttpClient httpClient = new HttpClient();
+
+    public static async Task Get(
+        string url,
+        HEADER headers,
+        Action<string, long> onSuccess,
+        Action<string, long> onFailure)
+    {
+        GigNet.Log?.Invoke($"GET {url} with headers {JsonConvert.SerializeObject(headers)}");
+        await SendRequest(HttpMethod.Get, url, null, headers, onSuccess, onFailure);
+    }
+
+    public static async Task Post(
+        string url,
+        string jsonBody,
+        HEADER headers,
+        Action<string, long> onSuccess,
+        Action<string, long> onFailure)
+    {
+        GigNet.Log?.Invoke($"POST {jsonBody} to {url} with headers {JsonConvert.SerializeObject(headers)}");
+        await SendRequest(HttpMethod.Post, url, jsonBody, headers, onSuccess, onFailure);
+    }
+
+    public static async Task Patch(
+        string url,
+        string jsonBody,
+        HEADER headers,
+        Action<string, long> onSuccess,
+        Action<string, long> onFailure)
+    {
+        GigNet.Log?.Invoke($"PATCH {jsonBody} to {url} with headers {JsonConvert.SerializeObject(headers)}");
+        await SendRequest(new HttpMethod("PATCH"), url, jsonBody, headers, onSuccess, onFailure);
+    }
+
+    private static async Task SendRequest(
+        HttpMethod method,
+        string url,
+        string body,
+        HEADER headers,
+        Action<string, long> onSuccess,
+        Action<string, long> onFailure)
+    {
+        try
+        {
+            using (var request = new HttpRequestMessage(method, url))
+            {
+                // Add headers - separate content headers from request headers
+                if (headers != null)
+                {
+                    foreach (var kvp in headers)
+                    {
+                        // Content headers need to be added to Content.Headers, not Request.Headers
+                        if (IsContentHeader(kvp.Key))
+                        {
+                            if (body != null)
+                            {
+                                if (request.Content == null)
+                                    request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+                                request.Content.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
+                            }
+                        }
+                        else
+                        {
+                            request.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
+                        }
+                    }
+                }
+
+                // Add body content if not already added
+                if (body != null && request.Content == null)
+                    request.Content = new StringContent(body, Encoding.UTF8, "application/json");
+
+                GigNet.Log?.Invoke("Request packed");
+
+                using (var response = await httpClient.SendAsync(request))
+                {
+                    string responseText = await response.Content.ReadAsStringAsync();
+                    long statusCode = (long)response.StatusCode;
+
+                    if (response.IsSuccessStatusCode)
+                    {
+                        GigNet.Log?.Invoke($"Request done - Status: {statusCode}");
+                        onSuccess?.Invoke(responseText, statusCode);
+                    }
+                    else
+                    {
+                        GigNet.LogError?.Invoke($"Request failed - Status: {statusCode}, Response: {responseText}");
+                        onFailure?.Invoke(responseText, statusCode);
+                    }
+                }
+            }
+        }
+        catch (HttpRequestException ex)
+        {
+            GigNet.LogError?.Invoke($"❌ Network error: {ex.Message}");
+            onFailure?.Invoke(ex.Message, 0);
+        }
+        catch (TaskCanceledException ex)
+        {
+            GigNet.LogError?.Invoke($"❌ Request timeout: {ex.Message}");
+            onFailure?.Invoke("Request timed out", 0);
+        }
+        catch (Exception ex)
+        {
+            GigNet.LogError?.Invoke($"❌ Request failed: {ex.Message}\n{ex.StackTrace}");
+            onFailure?.Invoke(ex.Message, 0);
+        }
+    }
+
+    private static bool IsContentHeader(string headerName)
+    {
+        var contentHeaders = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "Content-Type", "Content-Length", "Content-Encoding", "Content-Language",
+            "Content-Location", "Content-MD5", "Content-Range", "Content-Disposition",
+            "Expires", "Last-Modified"
+        };
+        return contentHeaders.Contains(headerName);
+    }
+
+    public static string ComputeHmacSHA512(string data, string key)
+    {
+        using (var hmac = new HMACSHA512(Encoding.UTF8.GetBytes(key)))
+        {
+            byte[] hashBytes = hmac.ComputeHash(Encoding.UTF8.GetBytes(data));
+            var sb = new StringBuilder(hashBytes.Length * 2);
+            foreach (byte b in hashBytes)
+                sb.Append(b.ToString("x2"));
+            return sb.ToString();
+        }
+    }
 }
+#endif

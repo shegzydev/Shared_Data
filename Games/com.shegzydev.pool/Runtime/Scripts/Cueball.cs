@@ -19,6 +19,9 @@ public class Cueball : Ball
     public float spinIntensity = 20;
 
     public Transform cueStick;
+#if CLIENT
+    public GameObject powerBar;
+#endif
     // [SerializeField] SpinKnob spinKnob;
     [SerializeField] Transform Lines;
 
@@ -119,7 +122,11 @@ public class Cueball : Ball
     {
         cueStick.position = transform.position;
         cueStick.rotation = Quaternion.FromToRotation(cueStick.right, hitDir) * cueStick.rotation;
+
         cueStick.gameObject.SetActive(canPlay);
+#if CLIENT
+        powerBar.SetActive(canPlay);
+#endif
     }
 
     public void Shoot(Vector3 _dir, Vector2 _spin, float _power)

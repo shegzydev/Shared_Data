@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using UnityEngine;
+//using UnityEngine;
 // using Newtonsoft.Json.Linq;
 using System.Linq;
 
@@ -54,6 +54,8 @@ public class WordGame
     /// </summary>
     public static Action<long, int, byte[]> OnGameEnd;
 
+    private Random _random = new Random();
+
     long roomID;
     int lastTime;
     float time = 120;
@@ -94,6 +96,7 @@ public class WordGame
     public WordGame(long roomId)
     {
         roomID = roomId;
+        endgame = false;
     }
 
     public void Init()
@@ -121,7 +124,7 @@ public class WordGame
                 {
                     letters[i][j] = new(lettersAvailable[j]);
                 }
-                letters[i] = letters[i].OrderBy(x => UnityEngine.Random.value).ToArray();
+                letters[i] = letters[i].OrderBy(x => ((float)_random.Next() / int.MaxValue)).ToArray();
             }
         }
 
@@ -131,12 +134,12 @@ public class WordGame
         OnStateUpdate?.Invoke(roomID, 1, GetDrawingData());
     }
 
-    public void Tick()
+    public void Tick(float elapsed)
     {
         if (endgame || paused) return;
 
         lastTime = (int)time;
-        time -= Time.deltaTime;
+        time -= elapsed;
 
         if (lastTime != (int)time)
         {
@@ -186,6 +189,8 @@ public class WordGame
         formedWord[player].Add(letters[player][index]);
         word[player].Append(letters[player][index]);
 
+        LogAction?.Invoke(LogType.Log, word[player].ToString());
+
         OnStateUpdate?.Invoke(roomID, player, GetDrawingData());
     }
 
@@ -199,6 +204,8 @@ public class WordGame
         formedWord[player].RemoveAt(index);
         word[player].Remove(index, 1);
 
+        LogAction?.Invoke(LogType.Log, word[player].ToString());
+
         OnStateUpdate?.Invoke(roomID, player, GetDrawingData());
     }
 
@@ -207,14 +214,17 @@ public class WordGame
         return word[player].ToString();
     }
 
-    public void CheckWord(int player)
+    public void CheckWord(int player, string wordToCheck)
     {
         if (endgame) return;
 
-        var currword = word[player].ToString();
+        //var currword = word[player].ToString();
+        var currword = wordToCheck;
+        LogAction?.Invoke(LogType.Log, "checking word" + currword);
 
         formedWord[player].Clear();
         word[player].Clear();
+
         for (int i = 0; i < letters[player].Length; i++)
         {
             letters[player][i].chosen = false;
@@ -225,18 +235,25 @@ public class WordGame
             // OnCheckWord?.Invoke(roomID, player, false);
             LogAction?.Invoke(LogType.Log, $"false: Found word {currword} already!");
         }
-        else if (Words.Contains(currword))
-        {
-            int score = ComputeScore(currword) * 100;
-            scores[player] += score;
-            foundWords[player].Add(currword, score);
-            OnCheckWord?.Invoke(roomID, player, true);
-            LogAction?.Invoke(LogType.Log, $"true: Found word {currword}");
-        }
         else
         {
-            OnCheckWord?.Invoke(roomID, player, false);
-            LogAction?.Invoke(LogType.Log, $"false: Could not find word {currword}");
+            try
+            {
+                if (Words.Contains(currword))
+                {
+                    LogAction?.Invoke(LogType.Log, $"true: Found word {currword}");
+                    int score = ComputeScore(currword) * 100;
+                    scores[player] += score;
+                    foundWords[player].Add(currword, score);
+                    OnCheckWord?.Invoke(roomID, player, true);
+                }
+                else
+                {
+                    LogAction?.Invoke(LogType.Log, $"false: Could not find word {currword}");
+                    OnCheckWord?.Invoke(roomID, player, false);
+                }
+            }
+            catch { }
         }
 
         OnStateUpdate?.Invoke(roomID, player, GetDrawingData());
@@ -335,7 +352,7 @@ public class WordGame
     /// Called on client side
     /// </summary>
     /// <param name="rawData"></param>
-
+#if CLIENT
     public void Load(int player, byte[] rawData)
     {
         MemoryStream memoryStream = new MemoryStream(rawData);
@@ -399,15 +416,40 @@ public class WordGame
             }
         }
 
-        letters[player] = _letters[player];
-        scores[player] = _scores[player];
-        formedWord[player] = _formedWord[player];
+        if (player != GigNet.IDInRoom)
+        {
+            letters[player] = _letters[player];
+            formedWord[player] = _formedWord[player];
+            scores[player] = _scores[player];
+        }
+        else
+        {
+            bool chosen = false;
+            
+            foreach (var character in _letters[player])
+            {
+                if (character.chosen)
+                {
+                    chosen = true;
+                    break;
+                }
+            }
+
+            if (!chosen)
+            {
+                letters[player] = _letters[player];
+                formedWord[player] = _formedWord[player];
+                scores[player] = _scores[player];
+            }
+        }
 
         binaryReader.Close();
         memoryStream.Close();
 
         OnStateUpdate?.Invoke(roomID, player, GetDrawingData());
     }
+#endif
+    int count = 0;
 
     public byte[] GetScoreData()
     {
@@ -442,7 +484,7 @@ public class WordGame
             }
             catch (EndOfStreamException)
             {
-                Debug.Log("Una don reach stream end!");
+                LogAction?.Invoke(LogType.Log, "Una don reach stream end!");
             }
         }
     }
@@ -475,10 +517,10 @@ public class WordGame
             chosenWords.Add(_word);
         }
 
-        foreach (var letter in availableLetters)
-        {
-            Debug.Log("letter: " + letter);
-        }
+        //foreach (var letter in availableLetters)
+        //{
+        //    Debug.Log("letter: " + letter);
+        //}
 
         lettersAvailable = availableLetters.Keys.ToArray();
     }

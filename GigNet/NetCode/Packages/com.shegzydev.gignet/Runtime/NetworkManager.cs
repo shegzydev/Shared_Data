@@ -4,7 +4,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
-using UnityEngine;
+using System.Threading.Tasks;
 using SimpleJSON;
 
 public enum TransferProtocol
@@ -32,7 +32,7 @@ internal enum ServerIP
     localHost, AWS, Linux, LAN
 }
 
-internal class NetworkManager : MonoBehaviour
+internal class NetworkManager
 {
     Dictionary<ServerIP, string> IPS = new() {
         { ServerIP.localHost, "127.0.0.1" },
@@ -44,11 +44,9 @@ internal class NetworkManager : MonoBehaviour
     string serverIP = "192.168.1.100";
     public string gameName = "word";
 #endif
-    [Space]
     public int port = 7778;
-    [Space]
 #if SERVER
-    public int[] RoomSizes = { 2 };
+    public int[] RoomSizes = { 1 };
 #endif
     public bool isServer = false;
     public bool enableAudio;
@@ -61,15 +59,12 @@ internal class NetworkManager : MonoBehaviour
     {
         get
         {
-            if (instance == null)
-#pragma warning disable CS0618 // Type or member is obsolete
-                instance = FindObjectOfType<NetworkManager>();
-#pragma warning restore CS0618 // Type or member is obsolete
+            if (instance == null) throw new InvalidOperationException("Network Manager Instance Does Not Exist");
             return instance;
         }
     }
-    static NetworkManager instance;
 
+    static NetworkManager instance;
     static RPCRouter rpcRouter;
     Agent agent;
 
@@ -89,25 +84,33 @@ internal class NetworkManager : MonoBehaviour
     Dictionary<int, NetworkObject> networkObjects = new();
     ConcurrentQueue<(ActionType eventType, object payload)> actionQueue = new();
 
-    void Awake()
+    public static void Init(string gameName, int port, bool isServer = true)
     {
-        if (instance && instance != this) DestroyImmediate(instance.gameObject);
-        instance = this;
+        instance = new NetworkManager(gameName, port, isServer);
+    }
 
+    NetworkManager(string gameName, int port, bool isServer = true)
+    {
+#if CLIENT
+        this.gameName = gameName;
+#endif
+        this.port = port;
+        this.isServer = isServer;
+    }
+
+    public void Init()
+    {
         ID = -1;
-
         rpcRouter = new RPCRouter();
+    }
 
-#pragma warning disable CS0618 // Type or member is obsolete
-        var netObjects = FindObjectsOfType<NetworkObject>();
-#pragma warning restore CS0618 // Type or member is obsolete
+    public void InitNetObjects(NetworkObject[] netObjects)
+    {
         for (int i = 0; i < netObjects.Length; i++)
         {
             rpcRouter.RegisterObject(netObjects[i]);
             networkObjects[netObjects[i].OwnerID] = netObjects[i];
         }
-
-        // DontDestroyOnLoad(gameObject);
     }
 
     public void RegObject(NetworkObject netObject)
@@ -122,26 +125,27 @@ internal class NetworkManager : MonoBehaviour
 
     }
 
-    public void TryConnect(long roomToConnect = -1, long idToBeAssigned = -1)
+    IEnumerator heartbeatRoutine;
+    public void TryConnect(string url ="", long roomToConnect = -1, long idToBeAssigned = -1)
     {
 
 #if SERVER
         Server.roomSizes = RoomSizes;
         agent = new Server(rpcRouter, port, enableAudio);
 #elif CLIENT
-        Debug.Log("I'm a client");
+        GigNet.Log?.Invoke("I'm a client");
         serverIP = IPS[ServerEnum];
         Client.OnConnected = () => RequestID(roomToConnect, idToBeAssigned);
         Client.OnReceivedID = (id) =>
         {
             ID = id;
-            Debug.Log($"I've been assigned with id {ID}");
+            GigNet.Log?.Invoke($"I've been assigned with id {ID}");
             GigNet.OnConnect?.Invoke();
 
-            if (heartbeatRoutine != null) StopCoroutine(heartbeatRoutine);
-            heartbeatRoutine = StartCoroutine(Heartbeat(1));
+            if (heartbeatRoutine != null) CoroutineRunnner.StopCoroutine(heartbeatRoutine);
+            heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat(1));
         };
-        agent = new Client(rpcRouter, serverIP, port, enableAudio, roomToConnect);
+        agent = new Client(rpcRouter, url, port, enableAudio, roomToConnect);
 #endif
     }
 
@@ -151,19 +155,21 @@ internal class NetworkManager : MonoBehaviour
         OnDisconnect?.Invoke();
     }
 
-    void Update()
+    public void Update()
     {
         HandleQueues();
         agent?.Tick();
     }
 
-    void FixedUpdate()
+    public void FixedUpdate()
     {
         agent?.FixedTick();
     }
 
     void RequestID(long roomToConnect, long idToBeAssigned)
     {
+        GigNet.Log?.Invoke("Requesting ID");
+
         byte[] packID = BitConverter.GetBytes((int)PackType.IDAssignment);
         byte[] playerID = BitConverter.GetBytes(idToBeAssigned);
         byte[] roomBytes = BitConverter.GetBytes(roomToConnect);
@@ -226,7 +232,7 @@ internal class NetworkManager : MonoBehaviour
                         RoomID = BitConverter.ToInt64(eventPayload, 0);
                         IDInRoom = BitConverter.ToInt32(eventPayload, 8);
 
-                        Debug.Log($"I've ben assigned to room {RoomID} with assigned id {IDInRoom}");
+                        GigNet.Log?.Invoke($"I've ben assigned to room {RoomID} with assigned id {IDInRoom}");
 
                         GigNet.OnJoinedRoom?.Invoke();
 
@@ -249,8 +255,9 @@ internal class NetworkManager : MonoBehaviour
                                 names.Add(i, (json[i]["name"], json[i]["avatar"]));
                             }
                         }
-
+#if CLIENT
                         GigNet.OnRoomFilled?.Invoke(names);
+#endif
                         break;
                     }
                 default: { break; }
@@ -308,11 +315,11 @@ internal class NetworkManager : MonoBehaviour
 
     public void DestroyOwnerObjects(int ownerID)
     {
-        Destroy(networkObjects[ownerID].gameObject);
+        //Destroy(networkObjects[ownerID].gameObject);
         networkObjects.Remove(ownerID);
     }
 
-    Coroutine heartbeatRoutine;
+#if CLIENT
     public IEnumerator Heartbeat(int timeOutInSeconds = 1)
     {
         int missedBeat = 0;
@@ -321,22 +328,24 @@ internal class NetworkManager : MonoBehaviour
             Agent.ResetHeartBeat();
             byte[] heartBeatPack = Util.MergeArrays(BitConverter.GetBytes(12), BitConverter.GetBytes((int)PackType.Heartbeat), BitConverter.GetBytes(DateTimeOffset.UtcNow.Ticks));
             agent?.SendTCPMessage(heartBeatPack);
-            float time = Time.time;
+            double time = Time.time;
 
-            yield return new WaitUntil(() => Agent.receivedHeartbeat || Time.time - time > timeOutInSeconds);
+            yield return new CoroutineRunnner.WaitUntil(() => Agent.receivedHeartbeat || Time.time - time > timeOutInSeconds);
 
             if (Time.time - time > timeOutInSeconds)
             {
                 missedBeat++;
-                if (missedBeat > 30) { Debug.Log("Assume Disconnection for Now"); }
+                if (missedBeat > 5.1f) { GigNet.OnTimeOut?.Invoke(true); }
             }
             else
             {
                 missedBeat = 0;
+                GigNet.OnTimeOut?.Invoke(false);
             }
-            yield return new WaitForSeconds(Mathf.Max(0, timeOutInSeconds - (Time.time - time)));
+            yield return new CoroutineRunnner.WaitForSeconds(Math.Max(0, timeOutInSeconds - (float)(Time.time - time)));
         }
     }
+#endif
 
     public void SendCookedRPC(TransferProtocol transferProtocol, byte[] payload)
     {
@@ -392,20 +401,77 @@ internal class NetworkManager : MonoBehaviour
 
     void OnApplicationQuit()
     {
-        Debug.Log("quit");
+        GigNet.Log?.Invoke("quit");
         agent?.CleanUp();
     }
 
     public static int ms = 0;
 #if CLIENT
-    void OnGUI()
+    public Action<(string ms_fps, string bandwidth)> OnGUILog;
+#endif
+    class Time
     {
-        if (showDebugLayer)
+        public static double time => DateTimeOffset.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
+    }
+}
+
+public class CoroutineRunnner
+{
+    static readonly HashSet<IEnumerator> _activeCoroutines = new();
+    public static IEnumerator StartCoroutine(IEnumerator routine)
+    {
+        _activeCoroutines.Add(routine);
+        _ = RunRoutine(routine);
+        return routine;
+    }
+
+    public static void StopCoroutine(IEnumerator routine)
+    {
+        _activeCoroutines?.Remove(routine);
+    }
+    static async Task RunRoutine(IEnumerator routine)
+    {
+        while (_activeCoroutines.Contains(routine))
         {
-            GUI.Label(new Rect(0, 0, 100, 50), $"{ms}ms : {Mathf.Round(1 / Time.deltaTime)}fps", new GUIStyle { fontSize = 20 });
-            if (agent == null) return;
-            GUI.Label(new Rect(0, 50, 100, 100), $"{agent.BandWidthUsage().In}MB : {agent.BandWidthUsage().Out}MB", new GUIStyle { fontSize = 20 });
+            if (!routine.MoveNext()) break;
+
+            object yield = routine.Current;
+
+            if (yield is WaitForSeconds wait)
+            {
+                await Task.Delay(wait.Milliseconds);
+            }
+            else if (yield is WaitUntil waitUntil)
+            {
+                while (!waitUntil.IsDone())
+                {
+                    await Task.Delay(10);
+                }
+            }
+            else
+            {
+                await Task.Yield();
+            }
         }
     }
-#endif
+
+    public class WaitForSeconds
+    {
+        public int Milliseconds { get; }
+
+        public WaitForSeconds(float seconds)
+        {
+            Milliseconds = (int)(seconds * 1000);
+        }
+    }
+    public class WaitUntil
+    {
+        private readonly Func<bool> _predicate;
+        public WaitUntil(Func<bool> predicate)
+        {
+            _predicate = predicate;
+        }
+
+        public bool IsDone() => _predicate();
+    }
 }

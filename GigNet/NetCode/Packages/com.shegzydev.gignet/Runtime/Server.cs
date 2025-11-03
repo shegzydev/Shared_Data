@@ -12,13 +12,23 @@ using Fleck;
 using SimpleJSON;
 using System.IO;
 using System.Text;
+using System.Linq;
 
 internal class Server : Agent
 {
-    public struct ClientData
+    public class ClientData
     {
-        public long id;
-        public object connection;
+        long assignedId; long id; object conn;
+
+        public ClientData(long _assignedid, long _id = -1, object _conn = null)
+        {
+            id = _id;
+            conn = _conn;
+        }
+
+        public object GetConn => conn;
+        public long GetId => id;
+        public long GetAssignedId => assignedId;
     }
 
     public static Server ServerInstance;
@@ -42,6 +52,7 @@ internal class Server : Agent
     Dictionary<long, Room> Rooms = new();
 
     static Dictionary<long, object> lobby = new();
+    static Dictionary<long, float> lobbyTimers = new();
 
     long currRoomIndex;
     public static GameAgent_Server serv;
@@ -118,6 +129,7 @@ internal class Server : Agent
         lock (lobby)
         {
             if (!lobby.TryGetValue(clientID, out var client)) return;
+
             if (client is IWebSocketConnection wsClient)
             {
                 if (wsClient.IsAvailable)
@@ -131,6 +143,7 @@ internal class Server : Agent
                         Debug.Log($"Removing disconnected WS client {clientID}: {ex.Message}");
                         try { wsClient.Close(); } catch { }
                         lobby.Remove(clientID);
+                        lobbyTimers.Remove(clientID);
                     }
                 }
             }
@@ -147,6 +160,7 @@ internal class Server : Agent
                         Debug.Log("Removing disconnected client.");
                         tcpClient.Close();
                         lobby.Remove(clientID);
+                        lobbyTimers.Remove(clientID);
                     }
                 }
             }
@@ -172,6 +186,28 @@ internal class Server : Agent
 
     public override void Tick()
     {
+        var timers = lobbyTimers.ToList();
+        foreach (var entry in timers)
+        {
+            if (entry.Value < 0) continue;
+
+            if (entry.Value >= 5f)
+            {
+                Debug.Log($"Client {entry.Key} timed out");
+                try
+                {
+                    if (lobby[entry.Key] is IWebSocketConnection wsClient) { wsClient.Close(1006); }
+                    else if (lobby[entry.Key] is TcpClient tcpClient) { tcpClient.Close(); }
+                }
+                catch { }
+                lobbyTimers[entry.Key] = -10;
+                continue;
+            }
+
+            float time = entry.Value + Time.deltaTime;
+            lobbyTimers[entry.Key] = time;
+        }
+
         while (roomQueue.TryDequeue(out var result))
         {
             Debug.Log($"player {result.id} is being added to room");
@@ -181,13 +217,24 @@ internal class Server : Agent
                     currRoomIndex++;
                 }
             else
+            {
                 AddToRoom(result.id, result.target, () => { });
+            }
         }
 
         while (disconnectionEventQueue.TryDequeue(out long ID))
         {
             if (!lobby.ContainsKey(ID)) continue;
+
+            try
+            {
+                if (lobby[ID] is IWebSocketConnection wsClient) wsClient.Close();
+                else if (lobby[ID] is TcpClient tcpClient) tcpClient.Close();
+            }
+            catch { }
+
             lobby.Remove(ID);
+            lobbyTimers.Remove(ID);
 
             if (clientRoomAllocation.ContainsKey(ID))
             {
@@ -200,7 +247,7 @@ internal class Server : Agent
 
         while (reconnectionEventQueue.TryDequeue(out long ID))
         {
-            if (!lobby.ContainsKey(ID)) continue;
+            if (!lobby.ContainsKey(ID)) { Debug.Log("not reconnecting..."); continue; }
 
             long roomID = clientRoomAllocation[ID];
             var room = Rooms[roomID];
@@ -252,6 +299,8 @@ internal class Server : Agent
 
     void GenerateRoom(long id, int playerCount, int botCount, bool botWins, JSONNode participants)
     {
+        if (Rooms.ContainsKey(id)) throw new ArgumentException($"Room {id} already exists on the game server");
+
         var names = new Dictionary<long, PlayerData>();
         for (int i = 0; i < participants.Count; i++)
         {
@@ -321,74 +370,98 @@ internal class Server : Agent
 
                         lock (lobby)
                         {
-                            // int newID = nextID++;
-                            // long newID = Interlocked.Increment(ref nextID);
-                            long newID = currClientID;
-
-                            if (clientRoomAllocation.ContainsKey(currClientID))
+                            lock (reconnectionEventQueue)
                             {
-                                long room = clientRoomAllocation[currClientID];
-                                if (Rooms.ContainsKey(room))
+                                // long newID = Interlocked.Increment(ref nextID);
+                                long newID = currClientID;
+                                id = newID;
+
+                                if (clientRoomAllocation.ContainsKey(newID))
                                 {
-                                    int idInroom = Rooms[room].GetClientIDInRoom(currClientID);
-                                    Rooms[room][idInroom] = currClientID;
-                                    // clientRoomAllocation.Remove(currClientID, out long rm);
-                                    // clientRoomAllocation.TryAdd(newID, room);
-                                    reconnectionEventQueue.Enqueue(newID);
-                                    Debug.Log($"Player {currClientID} now with new ID {newID} is back in room {room}");
+                                    long room = clientRoomAllocation[newID];
+                                    if (Rooms.ContainsKey(room))
+                                    {
+                                        int idInroom = Rooms[room].GetClientIDInRoom(newID);
+                                        Rooms[room][idInroom] = newID;
+
+                                        if (lobby.ContainsKey(newID))
+                                        {
+                                            lobby.Remove(newID);
+                                            lobbyTimers.Remove(newID);
+                                        }
+
+                                        lobby.Add(newID, client);
+                                        lobbyTimers.Add(newID, 0);
+
+                                        reconnectionEventQueue.Enqueue(newID);
+                                        Debug.Log($"Player {currClientID} now with new ID {newID} is back in room {room}");
+
+                                        byte[] packIDBytes = BitConverter.GetBytes(packID);
+                                        byte[] playerIdBytes = BitConverter.GetBytes(newID);
+                                        byte[] sessionBytes = BitConverter.GetBytes(session);
+                                        byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
+
+                                        var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
+                                        SendMessageTo(newID, data);
+
+                                        Debug.Log($"Client {currClientID} Reconnected as {newID}!");
+                                    }
+                                    else
+                                    {
+                                        if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
+                                        else if (client is TcpClient tcpClient) tcpClient.Close();
+                                    }
                                 }
                                 else
                                 {
-                                    if (client is IWebSocketConnection wsClient) wsClient.Close();
+                                    if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
                                     else if (client is TcpClient tcpClient) tcpClient.Close();
-                                    // roomQueue.Enqueue((newID, -1));
+                                    // roomQueue.Enqueue((newID, roomToJoin));
                                 }
                             }
-                            else
-                            {
-                                roomQueue.Enqueue((newID, -1));
-                            }
-
-                            id = newID;
-
-                            lobby.Remove(newID);
-                            lobby.Add(newID, client);
-
-                            byte[] packIDBytes = BitConverter.GetBytes(packID);
-                            byte[] playerIdBytes = BitConverter.GetBytes(newID);
-                            byte[] sessionBytes = BitConverter.GetBytes(session);
-                            byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
-
-                            var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
-                            SendMessageTo(newID, data);
-
-                            Debug.Log($"Client {currClientID} Reconnected as {newID}!");
                         }
                     }
                     else//New User
                     {
                         lock (lobby)
                         {
-                            // id = nextID++;
-                            if (currClientID == -1)
+                            if (currClientID > -1)
                             {
-                                do { id = Interlocked.Increment(ref nextID); }
-                                while (lobby.ContainsKey(id));
+                                id = currClientID;
                             }
                             else
                             {
-                                id = currClientID;
-                                if (clientRoomAllocation.ContainsKey(id)) clientRoomAllocation.Remove(id, out long _);
+                                do
+                                {
+                                    id = Interlocked.Increment(ref nextID);
+                                } while (lobby.ContainsKey(id));
                             }
-
-                            Debug.Log($"Client just requested for ID: {id}");
+                            Debug.Log($"Client just requested for ID: {id} and wants to join room: {roomToJoin}");
 
                             byte[] packIDBytes = BitConverter.GetBytes(packID);
                             byte[] playerIdBytes = BitConverter.GetBytes(id);
                             byte[] sessionBytes = BitConverter.GetBytes(session);
                             byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
 
+                            if (lobby.ContainsKey(id))
+                            {
+                                Debug.Log($"Lobby already contains player {id}, removing...");
+                                lobby.Remove(id);
+                                lobbyTimers.Remove(id);
+                            }
                             lobby.Add(id, client);
+                            lobbyTimers.Add(id, 0);
+
+                            if (clientRoomAllocation.ContainsKey(id))
+                            {
+                                Debug.Log($"Room allocation already contains player {id} in room {clientRoomAllocation[id]}, removing...");
+                                clientRoomAllocation.Remove(id, out long room);
+
+                                if (Rooms.ContainsKey(room))
+                                {
+                                    Rooms.Remove(room);
+                                }
+                            }
 
                             roomQueue.Enqueue((id, roomToJoin));
 
@@ -434,6 +507,11 @@ internal class Server : Agent
                         break;
                     }
 
+                    lock (lobbyTimers)
+                    {
+                        lobbyTimers[id] = 0;
+                    }
+
                     var data = Util.MergeArrays(BitConverter.GetBytes(payload.Length), payload);
                     SendMessageTo(id, data);
                     break;
@@ -469,9 +547,10 @@ internal class Server : Agent
                 socket.OnClose = () =>
                 {
                     Debug.Log("Client disconnected!");
-
-                    ServerInstance.disconnectionEventQueue.Enqueue(id);
-
+                    if (!ServerInstance.disconnectionEventQueue.Contains(id))
+                    {
+                        ServerInstance.disconnectionEventQueue.Enqueue(id);
+                    }
                     socket = null;
                 };
 
@@ -481,7 +560,12 @@ internal class Server : Agent
                     socket.OnError = null;
                     socket.OnBinary = null;
 
-                    try { socket.Close(); } catch { }
+                    try { socket.Close(1006); } catch { }
+                };
+
+                socket.OnMessage = message =>
+                {
+                    Debug.Log("received message");
                 };
 
                 socket.OnBinary = buffer =>
@@ -582,6 +666,7 @@ internal class Server : Agent
                         if (lobby.ContainsKey(id))
                         {
                             lobby.Remove(id);
+                            lobbyTimers.Remove(id);
                         }
                     }
                 }

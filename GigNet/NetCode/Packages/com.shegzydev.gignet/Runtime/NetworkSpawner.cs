@@ -1,7 +1,5 @@
 using System.IO;
 using System.Text;
-using System.Threading.Tasks;
-using UnityEngine;
 
 internal static class NetworkSpawner
 {
@@ -22,35 +20,41 @@ internal static class NetworkSpawner
         Vector3 position = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
         Quaternion rotation = new Quaternion(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
 
-        Debug.Log($"Attempting to Spawn {objectName}");
+        GigNet.Log?.Invoke($"Attempting to Spawn {objectName}");
 
-        var prefab = Resources.Load<GameObject>(objectName);
-        GameObject spawned = null;
+        //var prefab = Resources.Load<GameObject>(objectName);
+        var prefab = ObjectExist(objectName);
 
-        if (!prefab)//Try Mod Folder
+        // Object spawned = null;
+        if (!prefab)
         {
-            Debug.LogWarning("Could not find the object to Spawn");
+            GigNet.LogWarning?.Invoke("Could not find the object to Spawn");
             return;
         }
         else
         {
-            spawned = UnityEngine.Object.Instantiate(prefab, position, rotation);
+            //spawned = UnityEngine.Object.Instantiate(prefab, position, rotation);
         }
 
-        if (!spawned)
-        {
-            Debug.LogWarning($"Object=={objectName.ToUpper()}==not found");
-        }
-        else
-        {
-            NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
-            if (networkObject)
-            {
-                networkObject.SetID(NetObjID, spawnerID);
-                networkObject.Register();
-            }
-        }
+        //if (!spawned)
+        //{
+        //    GigNet.LogWarning?.Invoke($"Object=={objectName.ToUpper()}==not found");
+        //}
+        //else
+        //{
+        //    NetworkObject networkObject = spawned.GetComponent<NetworkObject>();
+        //    if (networkObject)
+        //    {
+        //        networkObject.SetID(NetObjID, spawnerID);
+        //        networkObject.Register();
+        //    }
+        //}
 
         stream.Close();
+    }
+
+    static bool ObjectExist(string name)
+    {
+        return false;
     }
 }
