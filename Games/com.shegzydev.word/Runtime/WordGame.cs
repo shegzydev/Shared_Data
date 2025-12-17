@@ -134,6 +134,12 @@ public class WordGame
         OnStateUpdate?.Invoke(roomID, 1, GetDrawingData());
     }
 
+    public void ForceUpdate()
+    {
+        OnStateUpdate?.Invoke(roomID, 0, GetDrawingData());
+        OnStateUpdate?.Invoke(roomID, 1, GetDrawingData());
+    }
+
     public void Tick(float elapsed)
     {
         if (endgame || paused) return;
@@ -406,13 +412,15 @@ public class WordGame
         }
 
         int wordLength = binaryReader.ReadInt32();
+        var _word = new StringBuilder[wordLength];
         for (int i = 0; i < wordLength; i++)
         {
             var str = binaryReader.ReadString();
+            _word[i] = new StringBuilder();
             if (i == player)
             {
-                word[i].Clear();
-                word[i].Append(str);
+                //_word[i].Clear();
+                _word[i].Append(str);
             }
         }
 
@@ -421,6 +429,9 @@ public class WordGame
             letters[player] = _letters[player];
             formedWord[player] = _formedWord[player];
             scores[player] = _scores[player];
+
+            word[player].Clear();
+            word[player].Append(_word[player].ToString());
         }
         else
         {
@@ -440,6 +451,9 @@ public class WordGame
                 letters[player] = _letters[player];
                 formedWord[player] = _formedWord[player];
                 scores[player] = _scores[player];
+                word[player].Clear();
+                word[player].Append(_word[player].ToString());
+                //word[player] = _word[player];
             }
         }
 

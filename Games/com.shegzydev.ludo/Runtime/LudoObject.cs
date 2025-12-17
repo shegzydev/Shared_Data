@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using UnityEngine;
 
 public enum NetWorkEvents : byte
 {
@@ -127,6 +126,8 @@ public class LudoObject
     float lastTimer;
     float timer = 20;
 
+    System.Random rand = new System.Random();
+
     public LudoObject(short numPlayers)
     {
         this.numPlayers = numPlayers;
@@ -155,8 +156,8 @@ public class LudoObject
     bool doubleSix = false;
     public void Roll()
     {
-        dice[0] = (short)UnityEngine.Random.Range(1, 7);
-        dice[1] = (short)UnityEngine.Random.Range(1, 7);
+        dice[0] = (short)rand.Next(1, 7);
+        dice[1] = (short)rand.Next(1, 7);
 
         dice[2] = (short)(dice[0] + dice[1]);
 
@@ -205,7 +206,7 @@ public class LudoObject
 
         if (chosen == 2)
         {
-            Debug.Log("chose third value");
+            //Debug.Log("chose third value");
             dice = new short[3] { 0, 0, 0 };
         }
         else
@@ -314,7 +315,7 @@ public class LudoObject
 
             if (refPos == piece.getAbsolutePos())
             {
-                Debug.Log($"Collided with a {color} piece");
+                //Debug.Log($"Collided with a {color} piece");
                 piece.SetPos(-1);
                 return true;
             }

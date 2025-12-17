@@ -29,6 +29,12 @@ public class Ball : MonoBehaviour
         Init();
     }
 
+    public void ResetBall()
+    {
+        rb.gravityScale = 0;
+        rb.linearVelocity = Vector2.zero;
+    }
+
     void Update()
     {
 #if CLIENT
@@ -37,8 +43,23 @@ public class Ball : MonoBehaviour
         Tick();
     }
 
+    void FixedUpdate()
+    {
+        if (rb.linearVelocity.magnitude < 1f)
+        {
+            rb.linearVelocity = Vector2.zero;
+        }
+        FixedTick();
+    }
+
+    void LateUpdate()
+    {
+
+    }
+
     protected virtual void Init() { }
     protected virtual void Tick() { }
+    protected virtual void FixedTick() { }
     protected virtual void OnCushionCollision()
     {
         snookManager.RegisterCushion();
@@ -80,6 +101,7 @@ public class Ball : MonoBehaviour
     public void Push(Vector2 dir)
     {
         // rb.linearVelocity += rb.linearVelocity * dir * Time.fixedDeltaTime;
+        if (rb.linearVelocity.magnitude < 1) return;
         rb.position += dir * Time.fixedDeltaTime;
     }
 #endif

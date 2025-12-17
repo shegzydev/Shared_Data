@@ -126,7 +126,7 @@ internal class NetworkManager
     }
 
     IEnumerator heartbeatRoutine;
-    public void TryConnect(string url ="", long roomToConnect = -1, long idToBeAssigned = -1)
+    public void TryConnect(string url = "", long roomToConnect = -1, long idToBeAssigned = -1)
     {
 
 #if SERVER
@@ -396,6 +396,11 @@ internal class NetworkManager
     public Dictionary<int, string> GetIDMaps(long roomID)
     {
         return ((Server)agent).GetIDMaps(roomID);
+    }
+
+    public bool GetRoomParameter(long roomID, string key, out string value)
+    {
+        return ((Server)agent).GetRoomParameter(roomID, key, out value);
     }
 #endif
 

@@ -5,7 +5,7 @@ using UnityEngine;
 
 public enum NetEvents : byte
 {
-    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign
+    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack
 }
 
 #if SERVER
@@ -17,8 +17,10 @@ public struct StateData
 }
 #endif
 
+
 public class Pool : MonoBehaviour
 {
+    public bool rolling = false;
     [SerializeField] Cueball cueball;
     [SerializeField] SnookManager snookManager;
 #if SERVER
@@ -30,7 +32,10 @@ public class Pool : MonoBehaviour
     public Action<int> OnGameEnd;
     public Action<bool, float> OnSlam;
     public Action<(byte player, byte type)> OnAssign;
+    public Action OnShoot;
+    public Action OnRerack;
 
+    public bool Paused = false;
     void Awake()
     {
         // snookManager.OnTurnChange = OnTurnSwitch;
@@ -52,6 +57,11 @@ public class Pool : MonoBehaviour
         snookManager.OnSlam = (flag, speed) =>
         {
             OnSlam?.Invoke(flag, speed);
+        };
+
+        snookManager.OnRerack = () =>
+        {
+            OnRerack?.Invoke();
         };
     }
 
@@ -156,6 +166,8 @@ public class Pool : MonoBehaviour
     public void Shoot(Vector3 dir, Vector2 spin, float power)
     {
         cueball.Shoot(dir, spin, power);
+        OnShoot?.Invoke();
+        rolling = true;
     }
 
     public void UpdateTimer(float[] times)
@@ -166,6 +178,11 @@ public class Pool : MonoBehaviour
     public float[] GetTimes()
     {
         return snookManager.GetTimerValues;
+    }
+
+    public bool BallStopped()
+    {
+        return snookManager.GetStopped();
     }
 
     public byte[] GetBallData()
@@ -186,6 +203,11 @@ public class Pool : MonoBehaviour
     public void SetStateData(byte[] data)
     {
         snookManager.SetState(data);
+    }
+
+    public void SetCue(Vector3 pos)
+    {
+        cueball.transform.position = pos;
     }
 
     public void SetTurn(int turn)
@@ -215,6 +237,7 @@ public class Pool : MonoBehaviour
 
     public void Tick()
     {
+        if (Paused) return;
         snookManager.TickTimer();
     }
 

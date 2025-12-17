@@ -24,6 +24,9 @@ public class SnookManager : MonoBehaviour
     public Action<int> OnGameEnd;
     public Action<(byte player, byte type)> OnAssign;
     public Action<bool, float> OnSlam;
+    public Action OnRerack;
+
+    Vector3[] startPositions;
 
 #if SERVER
     static Vector3[] _balls;
@@ -43,8 +46,20 @@ public class SnookManager : MonoBehaviour
         }
     }
 
+    public void GetStartPositions()
+    {
+        startPositions = new Vector3[16];
+        for (int i = 0; i < 16; i++)
+        {
+            startPositions[i] = balls[i].transform.position;
+        }
+    }
+
     void Start()
     {
+        GetStartPositions();
+        ballInHand = true;
+        breaking = true;
 
         foreach (var item in balls)
         {
@@ -81,41 +96,34 @@ public class SnookManager : MonoBehaviour
 
     public int GetTurn() => turn;
 
-    int GetStopped()
+    public bool GetStopped()
     {
-        int stopped = 0;
         foreach (var item in balls)
         {
-            if (item.speed < 0.05)
-            {
-                if (item is Cueball)
-                {
-                    if (Mathf.Abs(((Cueball)item).getSpin) < 0.0001f)
-                    {
-                        stopped++;
-                    }
-                }
-                else
-                {
-                    stopped++;
-                }
-            }
+            if (item.transform.position.x > 100) continue;
+            if (item.speed > 0.01f) return false;
         }
-        return stopped;
+        return true;
     }
 
-    public TaskCompletionSource<bool> allBallsStopped;
+    public bool allBallsStopped = true;
     public async void ScatterBalls()
     {
+        if (!allBallsStopped) return;
+        ballInHand = false;
+        breaking = false;
+
         PauseTimer();
         foul = false;
         turnPottedSelf = 0;
         turnPottedTotal = 0;
         turnCushion = 0;
         firstHit = BallType.NIL;
-        allBallsStopped = new TaskCompletionSource<bool>();
-        while (GetStopped() < balls.Length) await Task.Delay(16);
-        allBallsStopped.TrySetResult(true);
+        allBallsStopped = false;
+
+        while (!GetStopped()) await Task.Delay(16);
+
+        allBallsStopped = true;
         CheckTurnEvents();
         ResetTimers();
         StartTimer();
@@ -150,14 +158,35 @@ public class SnookManager : MonoBehaviour
         }
     }
 
+    public void Rerack()
+    {
+        CueReset?.Invoke();
+
+        turnType = new BallType[2] { BallType.NIL, BallType.NIL };
+        pottedBallCount = new int[2];
+
+        for (int i = 0; i < 16; i++)
+        {
+            balls[i].transform.position = startPositions[i];
+            balls[i].ResetBall();
+        }
+
+        breaking = true;
+        OnRerack?.Invoke();
+    }
+
     public float[] GetTimerValues => timer;
 
+    int hasWon = -1;
     bool foul = false;
     int turnCushion = 0;
     int turnPottedSelf = 0;
     int turnPottedTotal = 0;
     BallType firstHit = BallType.NIL;
     int potted;
+
+    bool potted8 = false;
+
     public void RegisterPot(Ball ball)
     {
         var type = ball.type;
@@ -169,25 +198,26 @@ public class SnookManager : MonoBehaviour
             }
             if (type == BallType.Ball8)
             {
-                if (turnType[turn] != BallType.Ball8)
-                {
-                    Debug.Log($"Player{turn} lost");
-                    //turn loses
-                    OnGameEnd?.Invoke(1 - turn);
-                }
-                else
-                {
-                    if (type == firstHit)
-                    {
-                        Debug.Log($"Player{turn} wins");
-                        OnGameEnd?.Invoke(turn);
-                    }
-                    else
-                    {
-                        Debug.Log($"Player{turn} lost");
-                        OnGameEnd?.Invoke(1 - turn);
-                    }
-                }
+                potted8 = true;
+                // if (turnType[turn] != BallType.Ball8)
+                // {
+                //     //Debug.Log($"Player{turn} lost");
+                //     //turn loses
+                //     OnGameEnd?.Invoke(1 - turn);
+                // }
+                // else
+                // {
+                //     if (type == firstHit)
+                //     {
+                //         //Debug.Log($"Player{turn} wins");
+                //         OnGameEnd?.Invoke(turn);
+                //     }
+                //     else
+                //     {
+                //         //Debug.Log($"Player{turn} lost");
+                //         OnGameEnd?.Invoke(1 - turn);
+                //     }
+                // }
             }
             return;
         }
@@ -196,7 +226,7 @@ public class SnookManager : MonoBehaviour
         {
             turnType[turn] = type;
             turnType[1 - turn] = (BallType)(1 - (int)type);
-            Debug.Log($"Player {turn} is {type}");
+            //Debug.Log($"Player {turn} is {type}");
             OnAssign?.Invoke(((byte)turn, (byte)type));
         }
 
@@ -228,7 +258,7 @@ public class SnookManager : MonoBehaviour
 
     public void CheckFirstHit(BallType type)
     {
-        Debug.Log($"first hit is {type}");
+        //Debug.Log($"first hit is {type}");
         firstHit = type;
         if (type != turnType[turn] && turnType[turn] != BallType.NIL)
         {
@@ -238,12 +268,49 @@ public class SnookManager : MonoBehaviour
 
     void InHand()
     {
+        ballInHand = true;
         CueReset.Invoke();
         Next();
     }
 
     void CheckTurnEvents()
     {
+        if (foul && turnType[turn] == BallType.NIL)
+        {
+            Rerack();
+            Next();
+            return;
+        }
+
+        if (potted8)
+        {
+            if (turnType[turn] == BallType.Ball8 || (turnType[turn] != BallType.NIL && pottedBallCount[(int)turnType[turn]] >= 7))
+            {
+                if (firstHit == BallType.Ball8)
+                {
+                    OnGameEnd.Invoke(foul ? 1 - turn : turn);
+                }
+                else if (firstHit == turnType[turn])
+                {
+                    OnGameEnd.Invoke(turn);
+                }
+                else
+                {
+                    OnGameEnd.Invoke(1 - turn);
+                }
+            }
+            else if (turnType[turn] == BallType.NIL)
+            {
+                Rerack();
+                Next();
+            }
+            else
+            {
+                OnGameEnd.Invoke(1 - turn);
+            }
+            return;
+        }
+
         if (firstHit == BallType.NIL)
             RegisterFoul();
 
@@ -333,9 +400,14 @@ public class SnookManager : MonoBehaviour
             writer.Write((byte)pottedBallCount[0]);
             writer.Write((byte)pottedBallCount[1]);
             writer.Write((byte)turn);
+            writer.Write(ballInHand);
+            writer.Write(breaking);
             return stream.ToArray();
         }
     }
+
+    bool ballInHand = true;
+    bool breaking = true;
 
     public void SetState(byte[] data)
     {
@@ -347,6 +419,7 @@ public class SnookManager : MonoBehaviour
             pottedBallCount[0] = reader.ReadByte();
             pottedBallCount[1] = reader.ReadByte();
             SetTurn(reader.ReadByte());
+            ballInHand = reader.ReadBoolean();
         }
     }
 }

@@ -84,7 +84,7 @@ internal class SimpleWebRequest
     }
 }*/
 
-#if SERVER
+#if SERVER || CLIENT
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -94,6 +94,7 @@ using System.Security.Cryptography;
 
 using HEADER = System.Collections.Generic.Dictionary<string, string>;
 using Newtonsoft.Json;
+using System.Threading;
 
 internal static class SimpleWebRequest
 {
@@ -103,10 +104,11 @@ internal static class SimpleWebRequest
         string url,
         HEADER headers,
         Action<string, long> onSuccess,
-        Action<string, long> onFailure)
+        Action<string, long> onFailure,
+        string authToken = "")
     {
         GigNet.Log?.Invoke($"GET {url} with headers {JsonConvert.SerializeObject(headers)}");
-        await SendRequest(HttpMethod.Get, url, null, headers, onSuccess, onFailure);
+        await SendRequest(HttpMethod.Get, url, null, headers, onSuccess, onFailure, authToken);
     }
 
     public static async Task Post(
@@ -114,10 +116,11 @@ internal static class SimpleWebRequest
         string jsonBody,
         HEADER headers,
         Action<string, long> onSuccess,
-        Action<string, long> onFailure)
+        Action<string, long> onFailure,
+        string authToken = "")
     {
         GigNet.Log?.Invoke($"POST {jsonBody} to {url} with headers {JsonConvert.SerializeObject(headers)}");
-        await SendRequest(HttpMethod.Post, url, jsonBody, headers, onSuccess, onFailure);
+        await SendRequest(HttpMethod.Post, url, jsonBody, headers, onSuccess, onFailure, authToken);
     }
 
     public static async Task Patch(
@@ -125,10 +128,22 @@ internal static class SimpleWebRequest
         string jsonBody,
         HEADER headers,
         Action<string, long> onSuccess,
-        Action<string, long> onFailure)
+        Action<string, long> onFailure,
+        string authToken = "")
     {
         GigNet.Log?.Invoke($"PATCH {jsonBody} to {url} with headers {JsonConvert.SerializeObject(headers)}");
-        await SendRequest(new HttpMethod("PATCH"), url, jsonBody, headers, onSuccess, onFailure);
+        await SendRequest(new HttpMethod("PATCH"), url, jsonBody, headers, onSuccess, onFailure, authToken);
+    }
+
+    public static async Task Delete(
+        string url,
+        HEADER headers,
+        Action<string, long> onSuccess,
+        Action<string, long> onFailure,
+        string authToken = "")
+    {
+        GigNet.Log?.Invoke($"DELETE {url} with headers {JsonConvert.SerializeObject(headers)}");
+        await SendRequest(HttpMethod.Delete, url, null, headers, onSuccess, onFailure, authToken);
     }
 
     private static async Task SendRequest(
@@ -137,10 +152,12 @@ internal static class SimpleWebRequest
         string body,
         HEADER headers,
         Action<string, long> onSuccess,
-        Action<string, long> onFailure)
+        Action<string, long> onFailure,
+        string authToken)
     {
         try
         {
+            using (var cts = new CancellationTokenSource(10000))
             using (var request = new HttpRequestMessage(method, url))
             {
                 // Add headers - separate content headers from request headers
@@ -165,13 +182,15 @@ internal static class SimpleWebRequest
                     }
                 }
 
+                request.Headers.TryAddWithoutValidation("Authorization", "Bearer " + authToken);
+
                 // Add body content if not already added
                 if (body != null && request.Content == null)
                     request.Content = new StringContent(body, Encoding.UTF8, "application/json");
 
                 GigNet.Log?.Invoke("Request packed");
 
-                using (var response = await httpClient.SendAsync(request))
+                using (var response = await httpClient.SendAsync(request, cts.Token))
                 {
                     string responseText = await response.Content.ReadAsStringAsync();
                     long statusCode = (long)response.StatusCode;
@@ -185,6 +204,11 @@ internal static class SimpleWebRequest
                     {
                         GigNet.LogError?.Invoke($"Request failed - Status: {statusCode}, Response: {responseText}");
                         onFailure?.Invoke(responseText, statusCode);
+                    }
+
+                    if (statusCode == 401)
+                    {
+                        GigNet.OnAuthFailed?.Invoke();
                     }
                 }
             }

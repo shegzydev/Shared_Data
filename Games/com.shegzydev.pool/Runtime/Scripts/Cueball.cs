@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using UnityEngine;
 
 public class Cueball : Ball
@@ -93,15 +94,15 @@ public class Cueball : Ball
         TraceHitBall(hitDir);
     }
 
-    void FixedUpdate()
+    protected override void FixedTick()
     {
         if (!canPlay)
         {
             spin -= spin * 0.90f * Time.fixedDeltaTime;
-            if (Mathf.Approximately(spin, 0)) spin = 0;
+            if (Mathf.Abs(spin) < 0.01) spin = 0;
 
             english -= english * 0.90f * Time.fixedDeltaTime;
-            if (Mathf.Approximately(english, 0)) english = 0;
+            if (Mathf.Abs(english) < 0.01) english = 0;
 
             rb.linearVelocity += (Vector2)hitDir * spinIntensity * spin * Time.fixedDeltaTime;
         }
@@ -245,8 +246,11 @@ public class Cueball : Ball
 
     async void WaitTillBallStop()
     {
-        bool done = await snookManager.allBallsStopped.Task;
-        canPlay = done;
+        while (!snookManager.allBallsStopped)
+        {
+            await Task.Yield();
+        }
+        canPlay = true;
     }
 
     int ballHits;

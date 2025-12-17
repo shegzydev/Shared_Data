@@ -18,17 +18,10 @@ internal class Server : Agent
 {
     public class ClientData
     {
-        long assignedId; long id; object conn;
-
-        public ClientData(long _assignedid, long _id = -1, object _conn = null)
-        {
-            id = _id;
-            conn = _conn;
-        }
-
-        public object GetConn => conn;
-        public long GetId => id;
-        public long GetAssignedId => assignedId;
+        public object socket;
+        public long room;
+        public float timer;
+        public bool active;
     }
 
     public static Server ServerInstance;
@@ -41,18 +34,17 @@ internal class Server : Agent
 
     RPCRouter rpcRouter;
     public int AssignableNetObjectID = 0;
-
     List<byte[]> messagePacks = new();
 
     ConcurrentQueue<(long id, long target)> roomQueue = new();
     ConcurrentQueue<long> disconnectionEventQueue = new();
     ConcurrentQueue<long> reconnectionEventQueue = new();
 
-    ConcurrentDictionary<long, long> clientRoomAllocation = new();
-    Dictionary<long, Room> Rooms = new();
+    Dictionary<long, Room> Rooms = new() { { 12345, new Room(1, 1, true, null) } };
+    HashSet<long> recentlyEndedRooms = new();
 
-    static Dictionary<long, object> lobby = new();
-    static Dictionary<long, float> lobbyTimers = new();
+    private readonly object lobbyLock = new();
+    static Dictionary<long, ClientData> lobby = new();
 
     long currRoomIndex;
     public static GameAgent_Server serv;
@@ -75,10 +67,15 @@ internal class Server : Agent
             for (int i = 0; i < Rooms[room].playerCount; i++)
             {
                 var client = Rooms[room][i];
-                clientRoomAllocation.TryRemove(client, out var _);
+                lobby.Remove(client, out var _);
             }
-            Rooms[room] = null;
-            Rooms.Remove(room);
+
+            if (room != 12345)
+            {
+                Rooms[room] = null;
+                Rooms.Remove(room);
+                recentlyEndedRooms.Add(room);
+            }
         };
 
         ServerInstance = this;
@@ -92,8 +89,9 @@ internal class Server : Agent
         serverBridge.OnRequestReceived += (path, method, body) =>
         {
             var json = JSON.Parse(body);
-            GenerateRoom(json["lobbyId"].AsLong, json["realPlayers"], json["botCount"], json["botWins"], json["participants"]);
+            GenerateRoom(json["lobbyId"].AsLong, json["realPlayers"], json["botCount"], json["botWins"], json["participants"], json.HasKey("tournamentId") ? new Dictionary<string, string> { { "tournamentId", json["tournamentId"].ToString() } } : null);
         };
+
         serverBridge.Start();
 
         if (enableAudio) audioUdp = new AudUDP(port + 1);
@@ -126,11 +124,17 @@ internal class Server : Agent
 
     void SendMessageTo(long clientID, byte[] data)
     {
-        lock (lobby)
+        Task.Run(() =>
         {
-            if (!lobby.TryGetValue(clientID, out var client)) return;
+            ClientData client = null;
+            lock (lobbyLock)
+            {
+                if (!lobby.TryGetValue(clientID, out client)) return;
+            }
 
-            if (client is IWebSocketConnection wsClient)
+            if (!client.active) return;
+
+            if (client.socket is IWebSocketConnection wsClient)
             {
                 if (wsClient.IsAvailable)
                 {
@@ -138,16 +142,13 @@ internal class Server : Agent
                     {
                         wsClient.Send(data);
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
-                        Debug.Log($"Removing disconnected WS client {clientID}: {ex.Message}");
-                        try { wsClient.Close(); } catch { }
-                        lobby.Remove(clientID);
-                        lobbyTimers.Remove(clientID);
+
                     }
                 }
             }
-            else if (client is TcpClient tcpClient)
+            else if (client.socket is TcpClient tcpClient)
             {
                 if (tcpClient.Connected)
                 {
@@ -157,14 +158,11 @@ internal class Server : Agent
                     }
                     catch (Exception)
                     {
-                        Debug.Log("Removing disconnected client.");
-                        tcpClient.Close();
-                        lobby.Remove(clientID);
-                        lobbyTimers.Remove(clientID);
+
                     }
                 }
             }
-        }
+        });
     }
 
     void SendMessage(byte[] data)
@@ -177,6 +175,7 @@ internal class Server : Agent
 
     public override void CleanUp()
     {
+        GigNet.Log?.Invoke("Cleaning up");
         tcp?.CleanUp();
         udp?.CleanUp();
         ws?.CleanUp();
@@ -186,26 +185,30 @@ internal class Server : Agent
 
     public override void Tick()
     {
-        var timers = lobbyTimers.ToList();
-        foreach (var entry in timers)
+        lock (lobbyLock)
         {
-            if (entry.Value < 0) continue;
-
-            if (entry.Value >= 5f)
+            var timerKeys = lobby.Keys;
+            foreach (var entry in timerKeys)
             {
-                Debug.Log($"Client {entry.Key} timed out");
-                try
-                {
-                    if (lobby[entry.Key] is IWebSocketConnection wsClient) { wsClient.Close(1006); }
-                    else if (lobby[entry.Key] is TcpClient tcpClient) { tcpClient.Close(); }
-                }
-                catch { }
-                lobbyTimers[entry.Key] = -10;
-                continue;
-            }
+                var client = lobby[entry];
+                if (client.timer < 0) continue;
 
-            float time = entry.Value + Time.deltaTime;
-            lobbyTimers[entry.Key] = time;
+                if (client.timer >= 5f)
+                {
+                    Debug.Log($"Client {entry} timed out");
+                    try
+                    {
+                        if (client.socket is IWebSocketConnection wsClient) { wsClient.Close(1006); }
+                        else if (client.socket is TcpClient tcpClient) { tcpClient.Close(); }
+                    }
+                    catch { }
+                    disconnectionEventQueue.Enqueue(entry);
+                    client.timer = -10;
+                    client.active = false;
+                    continue;
+                }
+                client.timer += Time.deltaTime;
+            }
         }
 
         while (roomQueue.TryDequeue(out var result))
@@ -228,28 +231,22 @@ internal class Server : Agent
 
             try
             {
-                if (lobby[ID] is IWebSocketConnection wsClient) wsClient.Close();
-                else if (lobby[ID] is TcpClient tcpClient) tcpClient.Close();
+                if (lobby[ID].socket is IWebSocketConnection wsClient) wsClient.Close();
+                else if (lobby[ID].socket is TcpClient tcpClient) tcpClient.Close();
             }
             catch { }
 
-            lobby.Remove(ID);
-            lobbyTimers.Remove(ID);
-
-            if (clientRoomAllocation.ContainsKey(ID))
-            {
-                long roomID = clientRoomAllocation[ID];
-                if (!Rooms.ContainsKey(roomID)) continue;
-                var room = Rooms[roomID];
-                serv.OnPlayerDisconnect(roomID, room.GetClientIDInRoom(ID));
-            }
+            long roomID = lobby[ID].room;
+            if (!Rooms.ContainsKey(roomID)) continue;
+            var room = Rooms[roomID];
+            serv.OnPlayerDisconnect(roomID, room.GetClientIDInRoom(ID));
         }
 
         while (reconnectionEventQueue.TryDequeue(out long ID))
         {
             if (!lobby.ContainsKey(ID)) { Debug.Log("not reconnecting..."); continue; }
 
-            long roomID = clientRoomAllocation[ID];
+            long roomID = lobby[ID].room;
             var room = Rooms[roomID];
             serv.OnPlayerReconnect(roomID, room.GetClientIDInRoom(ID));
         }
@@ -257,39 +254,29 @@ internal class Server : Agent
 
     bool AddToRoom(long client, long id, Action OnRoomFull)
     {
-        if (!Rooms.ContainsKey(id))
-        {
-            int rand = threadRandom.Value.Next(roomSizes.Length);
-            int cap = roomSizes[rand];
-            Rooms.Add(id, new Room(cap, 1, true, null));
-        }
+        var room = Rooms[id];
 
-        if (!Rooms[id].Add(client, out var addToRoom)) return false;
+        room.Add(client);
 
-        if (!clientRoomAllocation.TryAdd(client, id))
-        {
-            Debug.Log($"Could nod add client {client} to room {id}");
-        }
-
-        var data = Util.MergeArrays(BitConverter.GetBytes(16), BitConverter.GetBytes((int)PackType.RoomAssign), BitConverter.GetBytes(id), BitConverter.GetBytes(addToRoom.assignedIDInRoom));
+        var data = Util.MergeArrays(BitConverter.GetBytes(16), BitConverter.GetBytes((int)PackType.RoomAssign), BitConverter.GetBytes(id), BitConverter.GetBytes(room.GetClientIDInRoom(client)));
         SendMessageTo(client, data);
 
-        Debug.Log($"Added player {client} to room {id} with id {addToRoom.assignedIDInRoom}");
+        Debug.Log($"Added player {client} to room {id} with id {Rooms[id]}");
 
-        if (addToRoom.filled)
+        if (room.filled)
         {
-            var names = Rooms[id].GetNames();
+            var names = room.GetNames();
             var filledData = Util.MergeArrays(BitConverter.GetBytes(4 + names.Length), BitConverter.GetBytes((int)PackType.RoomFilled), names);
 
-            for (int i = 0; i < Rooms[id].playerCount; i++)
+            for (int i = 0; i < room.playerCount; i++)
             {
-                SendMessageTo(Rooms[id][i], filledData);
-                Debug.Log($"notified player {Rooms[id][i]} of room filled");
+                SendMessageTo(room[i], filledData);
+                Debug.Log($"notified player {room[i]} of room filled");
             }
 
-            serv.CreateRoom(id, Rooms[id].capacity, Rooms[id].botCount, Rooms[id].botWins);
+            serv.CreateRoom(id, room.capacity, room.botCount, room.botWins);
 
-            serv.OnFilledRoom(id);
+            serv.OnFilledRoom(id, room);
 
             OnRoomFull?.Invoke();
         }
@@ -297,7 +284,7 @@ internal class Server : Agent
         return true;
     }
 
-    void GenerateRoom(long id, int playerCount, int botCount, bool botWins, JSONNode participants)
+    void GenerateRoom(long id, int playerCount, int botCount, bool botWins, JSONNode participants, Dictionary<string, string> extras)
     {
         if (Rooms.ContainsKey(id)) throw new ArgumentException($"Room {id} already exists on the game server");
 
@@ -307,7 +294,7 @@ internal class Server : Agent
             names.Add(participants[i]["id"].AsLong, new PlayerData { id = participants[i]["id"].AsLong, name = participants[i]["name"], actualID = participants[i]["actualId"], avatar = participants[i]["avatar"] });
         }
 
-        var createdRoom = new Room(playerCount, botCount, botWins, names);
+        var createdRoom = new Room(playerCount, botCount, botWins, names, extras);
         Rooms.Add(id, createdRoom);
         Debug.Log($"Created room {id} with {playerCount} players and {botCount} bots");
     }
@@ -315,6 +302,11 @@ internal class Server : Agent
     public Dictionary<int, string> GetIDMaps(long roomID)
     {
         return Rooms[roomID].GetIDs();
+    }
+
+    public bool GetRoomParameter(long roomID, string key, out string value)
+    {
+        return Rooms[roomID].GetExtraData(key, out value);
     }
 
     public void StackMessage(byte[] payload)
@@ -346,7 +338,7 @@ internal class Server : Agent
 
                     Buffer.BlockCopy(payload, 4, eventArgs, 0, eventArgs.Length);
 
-                    var room = clientRoomAllocation[id];
+                    var room = lobby[id].room;
                     var data = Util.MergeArrays(BitConverter.GetBytes(room), eventArgs);
 
                     NetworkManager.Instance.QueueEvent(ActionType.NetEvent, data);
@@ -362,116 +354,100 @@ internal class Server : Agent
                     {
                         if (clientsession != session)
                         {
-                            if (client is IWebSocketConnection wsClient) wsClient.Close();
+                            if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
                             else if (client is TcpClient tcpClient) tcpClient.Close();
                             Debug.Log("rejecting connection");
                             break;
                         }
 
-                        lock (lobby)
+                        // long newID = Interlocked.Increment(ref nextID);
+                        id = currClientID;
+
+                        if (!Rooms.ContainsKey(roomToJoin) || recentlyEndedRooms.Contains(roomToJoin))
                         {
-                            lock (reconnectionEventQueue)
-                            {
-                                // long newID = Interlocked.Increment(ref nextID);
-                                long newID = currClientID;
-                                id = newID;
-
-                                if (clientRoomAllocation.ContainsKey(newID))
-                                {
-                                    long room = clientRoomAllocation[newID];
-                                    if (Rooms.ContainsKey(room))
-                                    {
-                                        int idInroom = Rooms[room].GetClientIDInRoom(newID);
-                                        Rooms[room][idInroom] = newID;
-
-                                        if (lobby.ContainsKey(newID))
-                                        {
-                                            lobby.Remove(newID);
-                                            lobbyTimers.Remove(newID);
-                                        }
-
-                                        lobby.Add(newID, client);
-                                        lobbyTimers.Add(newID, 0);
-
-                                        reconnectionEventQueue.Enqueue(newID);
-                                        Debug.Log($"Player {currClientID} now with new ID {newID} is back in room {room}");
-
-                                        byte[] packIDBytes = BitConverter.GetBytes(packID);
-                                        byte[] playerIdBytes = BitConverter.GetBytes(newID);
-                                        byte[] sessionBytes = BitConverter.GetBytes(session);
-                                        byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
-
-                                        var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
-                                        SendMessageTo(newID, data);
-
-                                        Debug.Log($"Client {currClientID} Reconnected as {newID}!");
-                                    }
-                                    else
-                                    {
-                                        if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
-                                        else if (client is TcpClient tcpClient) tcpClient.Close();
-                                    }
-                                }
-                                else
-                                {
-                                    if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
-                                    else if (client is TcpClient tcpClient) tcpClient.Close();
-                                    // roomQueue.Enqueue((newID, roomToJoin));
-                                }
-                            }
+                            if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
+                            else if (client is TcpClient tcpClient) tcpClient.Close();
+                            break;
                         }
-                    }
-                    else//New User
-                    {
-                        lock (lobby)
+
+                        lock (lobbyLock)
                         {
-                            if (currClientID > -1)
+                            if (lobby.TryGetValue(id, out var clientData))
                             {
-                                id = currClientID;
+                                clientData.socket = null;
+                                lobby[id] = new ClientData { socket = client, active = true, room = roomToJoin, timer = 0 };
+
+                                roomQueue.Enqueue((id, roomToJoin));
+                                reconnectionEventQueue.Enqueue(id);
+                                Debug.Log($"Player {id} is back in room {clientData.room}");
                             }
                             else
                             {
-                                do
-                                {
-                                    id = Interlocked.Increment(ref nextID);
-                                } while (lobby.ContainsKey(id));
+                                if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
+                                else if (client is TcpClient tcpClient) tcpClient.Close();
+                                break;
                             }
-                            Debug.Log($"Client just requested for ID: {id} and wants to join room: {roomToJoin}");
+                        }
 
-                            byte[] packIDBytes = BitConverter.GetBytes(packID);
-                            byte[] playerIdBytes = BitConverter.GetBytes(id);
-                            byte[] sessionBytes = BitConverter.GetBytes(session);
-                            byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
+                        byte[] packIDBytes = BitConverter.GetBytes(packID);
+                        byte[] playerIdBytes = BitConverter.GetBytes(id);
+                        byte[] sessionBytes = BitConverter.GetBytes(session);
+                        byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
 
+                        var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
+                        SendMessageTo(id, data);
+
+                        Debug.Log($"Client {currClientID} Reconnected as {id}!");
+                    }
+                    else//New User
+                    {
+                        if (currClientID > -1)
+                        {
+                            id = currClientID;
+                        }
+                        else
+                        {
+                            do
+                            {
+                                id = Interlocked.Increment(ref nextID);
+                            } while (lobby.ContainsKey(id));
+                        }
+
+                        if (!Rooms.ContainsKey(roomToJoin) || recentlyEndedRooms.Contains(roomToJoin))
+                        {
+                            if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
+                            else if (client is TcpClient tcpClient) tcpClient.Close();
+                            break;
+                        }
+
+                        Debug.Log($"Client just requested for ID: {id} and wants to join room: {roomToJoin}");
+
+                        bool wasIn = false;
+                        lock (lobbyLock)
+                        {
                             if (lobby.ContainsKey(id))
                             {
-                                Debug.Log($"Lobby already contains player {id}, removing...");
-                                lobby.Remove(id);
-                                lobbyTimers.Remove(id);
-                            }
-                            lobby.Add(id, client);
-                            lobbyTimers.Add(id, 0);
-
-                            if (clientRoomAllocation.ContainsKey(id))
-                            {
-                                Debug.Log($"Room allocation already contains player {id} in room {clientRoomAllocation[id]}, removing...");
-                                clientRoomAllocation.Remove(id, out long room);
-
-                                if (Rooms.ContainsKey(room))
-                                {
-                                    Rooms.Remove(room);
-                                }
+                                wasIn = true;
                             }
 
-                            roomQueue.Enqueue((id, roomToJoin));
+                            lobby[id] = null;
+                            lobby[id] = new ClientData { socket = client, active = true, room = roomToJoin, timer = 0 };
+                        }
 
-                            var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
-                            SendMessageTo(id, data);
+                        roomQueue.Enqueue((id, roomToJoin));
+                        if (wasIn) reconnectionEventQueue.Enqueue(id);
 
-                            foreach (var pack in messagePacks)//Pooled Dispatches
-                            {
-                                SendMessageTo(id, pack);
-                            }
+                        byte[] packIDBytes = BitConverter.GetBytes(packID);
+                        byte[] playerIdBytes = BitConverter.GetBytes(id);
+                        byte[] sessionBytes = BitConverter.GetBytes(session);
+                        byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
+
+                        var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
+                        SendMessageTo(id, data);
+
+                        foreach (var pack in messagePacks)//Pooled Dispatches
+                        {
+                            SendMessageTo(id, pack);
                         }
                     }
                     break;
@@ -507,9 +483,9 @@ internal class Server : Agent
                         break;
                     }
 
-                    lock (lobbyTimers)
+                    lock (lobbyLock)
                     {
-                        lobbyTimers[id] = 0;
+                        lobby[id].timer = 0;
                     }
 
                     var data = Util.MergeArrays(BitConverter.GetBytes(payload.Length), payload);
@@ -547,10 +523,7 @@ internal class Server : Agent
                 socket.OnClose = () =>
                 {
                     Debug.Log("Client disconnected!");
-                    if (!ServerInstance.disconnectionEventQueue.Contains(id))
-                    {
-                        ServerInstance.disconnectionEventQueue.Enqueue(id);
-                    }
+
                     socket = null;
                 };
 
@@ -659,17 +632,6 @@ internal class Server : Agent
             finally
             {
                 client.Close();
-                if (id > -1)
-                {
-                    lock (lobby)
-                    {
-                        if (lobby.ContainsKey(id))
-                        {
-                            lobby.Remove(id);
-                            lobbyTimers.Remove(id);
-                        }
-                    }
-                }
                 Debug.Log("Client disconnected.");
             }
         }
@@ -868,6 +830,15 @@ internal class Server : Agent
             _port = port;
             _listener = new HttpListener();
             _listener.Prefixes.Add($"http://*:{_port}/"); // allow all hostnames
+
+            AppDomain.CurrentDomain.ProcessExit += delegate
+            {
+                CleanUp();
+            };
+            AppDomain.CurrentDomain.DomainUnload += delegate
+            {
+                CleanUp();
+            };
         }
 
         /// <summary>
@@ -970,8 +941,8 @@ internal class Server : Agent
                 if (!IsRunning) return;
                 Debug.Log($"🛑 Stopping HTTP listener on port {_port}...");
                 _cts?.Cancel();
-                _listener.Stop();
-                _listener.Close();
+                _listener?.Stop();
+                _listener?.Close();
                 Debug.Log($"✅ Listener on port {_port} stopped and cleaned up.");
             }
             catch (Exception ex)

@@ -312,7 +312,7 @@ Transform:
   m_GameObject: {fileID: 570674514727189984}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 64.503944, y: 8.778001, z: 0}
+  m_LocalPosition: {x: 59.435963, y: 5.852, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -332,7 +332,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -725,7 +725,7 @@ MonoBehaviour:
   snookManager: {fileID: 6673315383202263793}
   ballType: 2
   sensitivity: 0.025
-  force: 7000
+  force: 8000
   english: 0
   spin: 1
   spinIntensity: 50
@@ -745,7 +745,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -957,7 +957,7 @@ Transform:
   m_GameObject: {fileID: 1253649890380419630}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 69.571915, y: 5.852, z: 0}
+  m_LocalPosition: {x: 64.503944, y: 2.9260006, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -977,7 +977,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -1069,7 +1069,7 @@ Transform:
   m_GameObject: {fileID: 1407231349385009638}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 59.435963, y: 5.852, z: 0}
+  m_LocalPosition: {x: 69.57192, y: -11.704, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -1089,7 +1089,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -1549,7 +1549,7 @@ Transform:
   m_GameObject: {fileID: 2013145852879007820}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 64.503944, y: -8.778, z: 0}
+  m_LocalPosition: {x: 64.503944, y: -2.9259996, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -1569,7 +1569,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -1643,7 +1643,6 @@ GameObject:
   m_Component:
   - component: {fileID: 6199874603960686927}
   - component: {fileID: 6673315383202263793}
-  - component: {fileID: 9001603183875153940}
   m_Layer: 0
   m_Name: Manager
   m_TagString: Untagged
@@ -1696,22 +1695,7 @@ MonoBehaviour:
   - {fileID: 2088667366129239284}
   - {fileID: 4242177115768201694}
   - {fileID: 464614438629970892}
---- !u!114 &9001603183875153940
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2322799026598742786}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: f396f70d1eb6b8b4986ad10dee7a5b30, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::UIManager
-  timerBars:
-  - {fileID: 0}
-  - {fileID: 0}
-  snookManager: {fileID: 6673315383202263793}
+  allBallsStopped: 1
 --- !u!1 &2355330801537583024
 GameObject:
   m_ObjectHideFlags: 0
@@ -1848,7 +1832,7 @@ Transform:
   m_GameObject: {fileID: 2672485816249930139}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 54.367977, y: -2.926, z: 0}
+  m_LocalPosition: {x: 59.435963, y: -5.852, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -1868,7 +1852,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -1960,7 +1944,7 @@ Transform:
   m_GameObject: {fileID: 3012091401922428622}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 54.367977, y: 2.926, z: 0}
+  m_LocalPosition: {x: 69.57192, y: 5.852, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -1980,7 +1964,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -2072,7 +2056,7 @@ Transform:
   m_GameObject: {fileID: 3302508586509845992}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 69.571915, y: -11.704, z: 0}
+  m_LocalPosition: {x: 54.36798, y: -2.926, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -2092,7 +2076,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -2472,7 +2456,7 @@ Transform:
   m_GameObject: {fileID: 4351599831758640566}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 59.435963, y: -5.852, z: 0}
+  m_LocalPosition: {x: 64.503944, y: 8.778001, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -2492,7 +2476,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -2584,7 +2568,7 @@ Transform:
   m_GameObject: {fileID: 4508041917698751415}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 69.571915, y: 11.704, z: 0}
+  m_LocalPosition: {x: 69.57192, y: -5.852, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -2604,7 +2588,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -2696,7 +2680,7 @@ Transform:
   m_GameObject: {fileID: 4607878883820980030}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 69.571915, y: -5.852, z: 0}
+  m_LocalPosition: {x: 69.57192, y: 11.704, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -2716,7 +2700,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -2836,8 +2820,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 375bf2f24369b7b4e963aeda44479ad0, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Pool
+  rolling: 0
   cueball: {fileID: 464614438629970892}
   snookManager: {fileID: 6673315383202263793}
+  AIWins: 0
   holePositions:
   - {fileID: 8053493330580274996}
   - {fileID: 3858520770317379205}
@@ -2848,6 +2834,7 @@ MonoBehaviour:
   ballMask:
     serializedVersion: 2
     m_Bits: 64
+  Paused: 0
 --- !u!1 &4928494881182976059
 GameObject:
   m_ObjectHideFlags: 0
@@ -3514,7 +3501,7 @@ Transform:
   m_GameObject: {fileID: 6444138619844481041}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 49.299995, y: 0, z: 0}
+  m_LocalPosition: {x: 49.3, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -3534,7 +3521,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -3781,7 +3768,7 @@ Transform:
   m_GameObject: {fileID: 7247678689355296579}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 64.503944, y: -2.9259996, z: 0}
+  m_LocalPosition: {x: 59.435963, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -3801,7 +3788,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -4186,20 +4173,20 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   balls:
   - {fileID: 6444138619844481041}
-  - {fileID: 2672485816249930139}
-  - {fileID: 3012091401922428622}
-  - {fileID: 4351599831758640566}
-  - {fileID: 7826027290287861170}
-  - {fileID: 1407231349385009638}
-  - {fileID: 2013145852879007820}
-  - {fileID: 7247678689355296579}
-  - {fileID: 9210114844693960876}
-  - {fileID: 570674514727189984}
   - {fileID: 3302508586509845992}
-  - {fileID: 4607878883820980030}
-  - {fileID: 7543954616439873528}
+  - {fileID: 7826027290287861170}
+  - {fileID: 2672485816249930139}
+  - {fileID: 7247678689355296579}
+  - {fileID: 570674514727189984}
+  - {fileID: 9210114844693960876}
+  - {fileID: 2013145852879007820}
   - {fileID: 1253649890380419630}
+  - {fileID: 4351599831758640566}
+  - {fileID: 1407231349385009638}
   - {fileID: 4508041917698751415}
+  - {fileID: 7543954616439873528}
+  - {fileID: 3012091401922428622}
+  - {fileID: 4607878883820980030}
   startPosition: {fileID: 3821674067547928968}
   ballDiameter: 5.852
 --- !u!1 &7543954616439873528
@@ -4230,7 +4217,7 @@ Transform:
   m_GameObject: {fileID: 7543954616439873528}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 69.571915, y: 0, z: 0}
+  m_LocalPosition: {x: 69.57192, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -4250,7 +4237,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -4461,7 +4448,7 @@ Transform:
   m_GameObject: {fileID: 7826027290287861170}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 59.435963, y: 0, z: 0}
+  m_LocalPosition: {x: 54.36798, y: 2.926, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -4481,7 +4468,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}
@@ -5349,7 +5336,7 @@ Transform:
   m_GameObject: {fileID: 9210114844693960876}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 64.503944, y: 2.9260006, z: 0}
+  m_LocalPosition: {x: 64.503944, y: -8.778, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 1
   m_Children:
@@ -5369,7 +5356,7 @@ Rigidbody2D:
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 17
-  m_LinearDamping: 0.4
+  m_LinearDamping: 0.7
   m_AngularDamping: 0.5
   m_GravityScale: 0
   m_Material: {fileID: 0}

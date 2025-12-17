@@ -74,7 +74,7 @@ internal class Client : Agent
         port = _port;
 
         // StartClientUDPConnection();
-#if UNITY_WEBGL
+#if UNITY_WEBGL || UNITY_ANDROID || UNITY_IOS
         StartClientWSConnection(serverIP);
 #else
         StartClientTCPConnection();
@@ -151,13 +151,16 @@ internal class Client : Agent
             }
             GigNet.Log?.Invoke($"using host {serverIP}");
 
-#if UNITY_EDITOR
-            wsClient = new SimpleWebSocket($"ws://{serverIP}:{port + 6}");
-#else
-            //wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port + 6}");
+            // #if UNITY_EDITOR
+            //             wsClient = new SimpleWebSocket($"ws://{serverIP}:{port + 6}");
+            // #else
+#if DEBUG_MODE
+            wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port + 6}");
+#elif RELEASE
+            GigNet.Log?.Invoke("Connecting to " + $"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
             wsClient = new SimpleWebSocket($"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
 #endif
-
+            // #endif
             wsClient.OnOpen += () =>
             {
                 OnConnected?.Invoke();

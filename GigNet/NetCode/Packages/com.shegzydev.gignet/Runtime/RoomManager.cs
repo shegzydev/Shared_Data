@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using SimpleJSON;
 
 public class RoomManager
@@ -7,7 +8,7 @@ public class RoomManager
 
 }
 
-internal struct PlayerData
+public struct PlayerData
 {
     public long id;
     public string name;
@@ -15,44 +16,37 @@ internal struct PlayerData
     public string avatar;
 }
 
-internal class Room
+public class Room
 {
     public int capacity;
     public int botCount { get; }
     public bool botWins { get; }
+
     long[] clientIDs;
-    int curr;
 
-    Dictionary<long, PlayerData> dataDict { get; }
+    Dictionary<long, PlayerData> dataDict = new() { { 12345, new PlayerData { id = 12345, name = "Olu" } }, { 67890, new PlayerData { id = 67890, name = "Ola" } } };
+    Dictionary<long, int> playerIds = new();
+    Dictionary<string, string> extraData = new();
 
-    public int playerCount => curr;
-
-    public Room(int _capacity, int _bots, bool _botWin, Dictionary<long, PlayerData> _names)
+    public Room(int _capacity, int _bots, bool _botWin, Dictionary<long, PlayerData> _names, Dictionary<string, string> extras = null)
     {
-        dataDict = _names;
+        if (_names != null) { dataDict = _names; }
         botWins = _botWin;
         botCount = _bots;
         capacity = _capacity;
         clientIDs = new long[capacity];
+        extraData = extras;
     }
 
-    public bool filled => curr == capacity;
+    public bool filled => playerIds.Count == capacity;
+    public int playerCount => playerIds.Count;
 
-    /// <summary>
-    /// returns true if room is filled
-    /// </summary>
-    /// <param name="clientid"></param>
-    /// <returns></returns>
-    public bool Add(long clientid, out (bool filled, int assignedIDInRoom) fillData)
+    public void Add(long clientid)
     {
-        fillData = (false, -1);
-
-        if (filled) return false;
-
-        clientIDs[curr++] = clientid;
-        fillData = (filled, curr - 1);
-
-        return true;
+        if (playerIds.ContainsKey(clientid)) return;
+        int index = playerIds.Count;
+        clientIDs[index] = clientid;
+        playerIds[clientid] = index;
     }
 
     public long this[int index]
@@ -64,18 +58,29 @@ internal class Room
         }
     }
 
+    public bool Has(long idToCheck)
+    {
+        var has = dataDict.Where(x => x.Value.id == idToCheck).ToArray(); ;
+        return has.Length > 0;
+    }
+
+    public bool GetExtraData(string key, out string value)
+    {
+        value = "";
+        if (extraData != null && extraData.TryGetValue(key, out value)) return true;
+        return false;
+    }
+
     public int GetClientIDInRoom(long clientID)
     {
-        int id = -1;
-        for (int i = 0; i < playerCount; i++)
+        try
         {
-            if (clientIDs[i] == clientID)
-            {
-                id = i;
-            }
+            return playerIds[clientID];
         }
-
-        return id;
+        catch (NullReferenceException)
+        {
+            return -1;
+        }
     }
 
     public byte[] GetNames()
@@ -88,6 +93,7 @@ internal class Room
         JSONObject nameData = new JSONObject();
 
         HashSet<string> assigned = new();
+
         for (int i = 0; i < clientIDs.Length; i++)
         {
             var tmp = new JSONObject();
@@ -114,7 +120,6 @@ internal class Room
         var lenBytes = BitConverter.GetBytes(namebytes.Length);
         return GigNet.PackBytes(lenBytes, namebytes);
     }
-
     public Dictionary<int, string> GetIDs()
     {
         var IDMap = new Dictionary<int, string>();

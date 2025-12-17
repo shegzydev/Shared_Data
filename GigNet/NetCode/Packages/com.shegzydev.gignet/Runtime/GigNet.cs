@@ -1,13 +1,78 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Numerics;
+
+#if BLAZOR
+using System.Text.Json.Serialization;
+#endif
 using System.Threading.Tasks;
 
 internal struct Vector3
 {
+#if BLAZOR
+    [JsonInclude]
+    public float x;
+
+    [JsonInclude]
+    public float y;
+
+    [JsonInclude]
+    public float z;
+#else
     public float x, y, z;
+#endif
     public Vector3(float _x = 0, float _y = 0, float _z = 0)
     {
         x = _x; y = _y; z = _z;
+    }
+
+    public static Vector3 Cross(Vector3 a, Vector3 b)
+    {
+        return new Vector3(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x
+        );
+    }
+
+    public static float Dot(Vector3 a, Vector3 b)
+    {
+        return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    public static Vector3 operator *(Vector3 v, float f)
+    {
+        return new Vector3(v.x * f, v.y * f, v.z * f);
+    }
+
+    public static Vector3 operator *(float f, Vector3 v)
+    {
+        return new Vector3(v.x * f, v.y * f, v.z * f);
+    }
+
+    public static Vector3 operator +(Vector3 vA, Vector3 vB)
+    {
+        return new Vector3(vA.x + vB.x, vA.y + vB.y, vA.z + vB.z);
+    }
+
+    public static Vector3 operator -(Vector3 vA, Vector3 vB)
+    {
+        return new Vector3(vA.x - vB.x, vA.y - vB.y, vA.z - vB.z);
+    }
+
+    public static Vector3 Reflect(Vector3 direction, Vector3 normal)
+    {
+        return direction - 2 * Dot(direction, normal) * normal;
+    }
+
+    public float magnitude()
+    {
+        return (float)Math.Sqrt(x * x + y * y + z * z);
+    }
+
+    public override string ToString()
+    {
+        return $"({x}, {y}, {z})";
     }
 }
 
@@ -36,7 +101,20 @@ public class GigNet
 
     public static string Alias;
 
-    public static int IDInRoom => NetworkManager.Instance.IDInRoom;
+    public static int IDInRoom
+    {
+        get
+        {
+            try
+            {
+                return NetworkManager.Instance.IDInRoom;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+    }
 
 
 #if CLIENT
@@ -44,13 +122,13 @@ public class GigNet
 
     public static Action<bool> OnTimeOut;
     public static Action<Dictionary<int, (string name, string avatar)>> OnRoomFilled;
-    public static void Init(string gameName,int port)
+    public static void Init(string gameName, int port)
     {
-        NetworkManager.Init(gameName,port,false);
+        NetworkManager.Init(gameName, port, false);
     }
-    public static void Connect(string url ="",long roomToConnect = -1, long idToBeAssigned = -1)
+    public static void Connect(string url = "", long roomToConnect = -1, long idToBeAssigned = -1)
     {
-        NetworkManager.Instance.TryConnect(url,roomToConnect, idToBeAssigned);
+        NetworkManager.Instance.TryConnect(url, roomToConnect, idToBeAssigned);
     }
 #elif SERVER
     public static void Init(int port, GameAgent_Server agent)
@@ -89,6 +167,11 @@ public class GigNet
     {
         return NetworkManager.Instance.GetIDMaps(roomID);
     }
+
+    public static bool GetRoomParameter(long roomID, string key, out string value)
+    {
+        return NetworkManager.Instance.GetRoomParameter(roomID, key, out value);
+    }
 #endif
 
     public static void JoinRoom()
@@ -118,21 +201,33 @@ public class GigNet
         NetworkManager.Instance.FixedUpdate();
     }
 
-#if SERVER
-    public static async void Get(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, bool shouldRetry = false)
+#if SERVER || CLIENT
+    public static async Task Get(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
     {
-        await SimpleWebRequest.Get(url, headers, onSuccess, onFailure);
+        await SimpleWebRequest.Get(url, headers, onSuccess, onFailure, authToken);
     }
 
-    public static async Task Post(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, bool shouldRetry = false)
+    public static async Task Post(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
     {
-        await SimpleWebRequest.Post(url, jsonBody, headers, onSuccess, onFailure);
+        await SimpleWebRequest.Post(url, jsonBody, headers, onSuccess, onFailure, authToken);
     }
 
-    public static async Task Patch(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, bool shouldRetry = false)
+    public static async Task Patch(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
     {
-        await SimpleWebRequest.Patch(url, jsonBody, headers, onSuccess, onFailure);
+        await SimpleWebRequest.Patch(url, jsonBody, headers, onSuccess, onFailure, authToken);
     }
+
+    public static async Task Delete(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
+    {
+        await SimpleWebRequest.Delete(url, headers, onSuccess, onFailure, authToken);
+    }
+
+    public static void UploadImage(string url, string formFieldName, Dictionary<string, string> headers, Action onUploadStart, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "")
+    {
+        WebImageUploader.PickAndPatchImagePng(url, formFieldName, headers, () => onUploadStart(), (msg, code) => onSuccess(msg, code), (msg, code) => onFailure(msg, code), authToken);
+    }
+
+    public static Action OnAuthFailed;
 
     public static string HASH(string data, string key)
     {

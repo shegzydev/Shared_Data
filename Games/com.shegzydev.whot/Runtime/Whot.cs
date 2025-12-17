@@ -3,7 +3,6 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using UnityEngine;
 
 public enum NetEvents : byte
 {
@@ -12,10 +11,18 @@ public enum NetEvents : byte
 
 public class Whot
 {
+    public struct DrawData
+    {
+        public Card[][] hands;
+        public Card stack;
+        public int deck;
+    }
+
     public enum Suit
     {
-        Cross, Square, Star, Circle, Triangle, Whot
+        Cross, Square, Star, Circle, Triangle, Whot, NIL
     }
+
     public class Card
     {
         public Suit Suit { get; }
@@ -45,6 +52,7 @@ public class Whot
         public override string ToString() => $"{Suit:g} {Number}";
         public static int ByteSize => 8;
     }
+
     class CardDeck
     {
         private static readonly int[] CircleNumbers = { 1, 2, 3, 4, 5, 7, 8, 10, 11, 12, 13, 14 };
@@ -94,6 +102,9 @@ public class Whot
     public event Action<Card> OnUpdateCall;
     public event Action<(Card card, int id, int player, bool market)> OnPickCard;
     public event Action OnSync;
+    public event Action<byte[]> OnGameStateUpdate;
+    public event Action<DrawData> OnDrawStateUpdate;
+    public event Action<int> OnDrop20;
 
     public Whot(int numplayers)
     {
@@ -165,16 +176,26 @@ public class Whot
 
         int card = hands[player][handIndex];
         int last = played.Peek();
+        bool is20 = cards[card] == 20;
 
-        if (toPickByNext > 1)
+        if (!is20)
         {
-            if (cards[last].Number == 2 && cards[card].Number != 2) return false;
-            if (cards[last].Number == 5 && cards[card].Number != 5) return false;
-        }
+            if (toPickByNext > 1)
+            {
+                if (cards[last].Number == 2 && cards[card].Number != 2) return false;
+                if (cards[last].Number == 5 && cards[card].Number != 5) return false;
+            }
 
-        if (cards[last].Suit != cards[card].Suit
-            && cards[last].Number != cards[card].Number)
-            return false;
+            if (cards[last].Suit != cards[card].Suit
+                && cards[last].Number != cards[card].Number)
+            {
+                return false;
+            }
+        }
+        else
+        {
+            toPickByNext = 1;
+        }
 
         played.Push(card);
         OnUpdateCall?.Invoke(cards[card]);
@@ -213,12 +234,33 @@ public class Whot
             OnPassMessage?.Invoke(2, turn);
             PickGeneral(player);
         }
+        else if (is20)
+        {
+            CoroutineRunnner.StartCoroutine(WaitForNextSuit());
+        }
         else
         {
             NextTurn();
         }
 
+        OnGameStateUpdate?.Invoke(GetState());
         return true;
+    }
+
+
+    Suit NextSuit = Suit.NIL;
+    IEnumerator WaitForNextSuit()
+    {
+        NextSuit = Suit.NIL;
+        while (NextSuit == Suit.NIL)
+        {
+            yield return new CoroutineRunnner.WaitForSeconds(0.016f);
+        }
+    }
+
+    public void ChooseNextSuit(Suit suit)
+    {
+        NextSuit = suit;
     }
 
     bool HasFollowUpForHold(Suit lastSuit)
@@ -264,15 +306,24 @@ public class Whot
         }
         toPickByNext = 1;
 
-        if (!DeckEmpty()) NextTurn();
-        else Tender();
+
+        if (!DeckEmpty())
+        {
+            NextTurn();
+            OnGameStateUpdate?.Invoke(GetState());
+        }
+        else
+        {
+            OnGameStateUpdate?.Invoke(GetState());
+            Tender();
+        }
     }
 
     public void PickGeneral(int player)
     {
         if (player != turn) return;
 
-        Debug.Log("General Market");
+        //Debug.Log("General Market");
 
         for (int i = 0; i < numplayers; i++)
         {
@@ -284,8 +335,16 @@ public class Whot
             }
         }
 
-        if (!DeckEmpty()) { NextTurn(); Debug.Log("Nexting...general market"); }
-        else Tender();
+        if (!DeckEmpty())
+        {
+            NextTurn();
+            OnGameStateUpdate?.Invoke(GetState());
+        }
+        else
+        {
+            OnGameStateUpdate?.Invoke(GetState());
+            Tender();
+        }
     }
 
     bool DeckEmpty()
@@ -502,6 +561,25 @@ public class Whot
             // endGame
             endGame = reader.ReadBoolean();
         }
+
+        OnDrawStateUpdate?.Invoke(GetDrawData());
+    }
+
+    public DrawData GetDrawData()
+    {
+        var data = new DrawData();
+        data.stack = cards[played.Peek()];
+        data.deck = deck.Count();
+        data.hands = new Card[hands.Length][];
+        for (int i = 0; i < hands.Length; i++)
+        {
+            data.hands[i] = new Card[hands[i].Count];
+            for (int j = 0; j < hands[i].Count; j++)
+            {
+                data.hands[i][j] = cards[hands[i][j]];
+            }
+        }
+        return data;
     }
 
     public byte[] GetCards()

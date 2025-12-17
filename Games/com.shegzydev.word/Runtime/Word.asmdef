@@ -1,3 +1,16 @@
 {
-	"name": "Word"
+    "name": "Word",
+    "rootNamespace": "",
+    "references": [
+        "GUID:ad09961383fd926428920982fc13e725"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
 }
