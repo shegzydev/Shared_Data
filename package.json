@@ -1,0 +1,9 @@
+{
+  "name": "com.shegzydev.shared",
+  "displayName": "SharedPackages",
+  "version": "1.0.0",
+  "unity": "2022.3",
+  "description": "Reusable Shared Packages",
+  "author": { "name": "shegzydev", "email": "oluabesegun@gmail.com" },
+  "com.yourname.yourlib": ""
+}

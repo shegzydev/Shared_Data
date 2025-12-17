@@ -1,9 +1,0 @@
-{
-  "name": "com.shegzydev.ludo",
-  "displayName": "Ludo",
-  "version": "1.0.0",
-  "unity": "2022.3",
-  "description": "Reusable Ludo Game",
-  "author": { "name": "shegzydev", "email": "oluabesegun@gmail.com" },
-  "com.yourname.yourlib": ""
-}
