@@ -12,7 +12,6 @@ using Fleck;
 using SimpleJSON;
 using System.IO;
 using System.Text;
-using System.Linq;
 
 internal class Server : Agent
 {
@@ -41,7 +40,8 @@ internal class Server : Agent
     ConcurrentQueue<long> reconnectionEventQueue = new();
 
     Dictionary<long, Room> Rooms = new() { { 12345, new Room(1, 1, true, null) } };
-    HashSet<long> recentlyEndedRooms = new();
+    // HashSet<long> recentlyEndedRooms = new();
+    Queue<(long roomID, DateTime expirationTime)> expiryQueue = new();
 
     private readonly object lobbyLock = new();
     static Dictionary<long, ClientData> lobby = new();
@@ -64,18 +64,7 @@ internal class Server : Agent
 
         serv.OnRemoveRoom = (room) =>
         {
-            for (int i = 0; i < Rooms[room].playerCount; i++)
-            {
-                var client = Rooms[room][i];
-                lobby.Remove(client, out var _);
-            }
-
-            if (room != 12345)
-            {
-                Rooms[room] = null;
-                Rooms.Remove(room);
-                recentlyEndedRooms.Add(room);
-            }
+            CleanupRoom(room);
         };
 
         ServerInstance = this;
@@ -173,6 +162,23 @@ internal class Server : Agent
         }
     }
 
+    void CleanupRoom(long room)
+    {
+        if (!Rooms.ContainsKey(room)) return;
+
+        for (int i = 0; i < Rooms[room].playerCount; i++)
+        {
+            var client = Rooms[room][i];
+            lobby.Remove(client, out var _);
+        }
+
+        if (room == 12345) return;
+
+        Rooms[room] = null;
+        Rooms.Remove(room);
+        // recentlyEndedRooms.Add(room);
+    }
+
     public override void CleanUp()
     {
         GigNet.Log?.Invoke("Cleaning up");
@@ -250,6 +256,14 @@ internal class Server : Agent
             var room = Rooms[roomID];
             serv.OnPlayerReconnect(roomID, room.GetClientIDInRoom(ID));
         }
+
+        var now = DateTimeOffset.UtcNow;
+        while (expiryQueue.Count > 0 && expiryQueue.Peek().expirationTime <= now)
+        {
+            var (roomID, _) = expiryQueue.Dequeue();
+            CleanupRoom(roomID);
+            Debug.Log($"Room {roomID} expired from recently ended rooms.");
+        }
     }
 
     bool AddToRoom(long client, long id, Action OnRoomFull)
@@ -297,6 +311,9 @@ internal class Server : Agent
         var createdRoom = new Room(playerCount, botCount, botWins, names, extras);
         Rooms.Add(id, createdRoom);
         Debug.Log($"Created room {id} with {playerCount} players and {botCount} bots");
+
+        var expirationTime = DateTimeOffset.UtcNow.AddHours(12);
+        expiryQueue.Enqueue((id, expirationTime.DateTime));
     }
 
     public Dictionary<int, string> GetIDMaps(long roomID)
@@ -363,7 +380,7 @@ internal class Server : Agent
                         // long newID = Interlocked.Increment(ref nextID);
                         id = currClientID;
 
-                        if (!Rooms.ContainsKey(roomToJoin) || recentlyEndedRooms.Contains(roomToJoin))
+                        if (!Rooms.ContainsKey(roomToJoin))
                         {
                             if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
                             else if (client is TcpClient tcpClient) tcpClient.Close();
@@ -413,7 +430,7 @@ internal class Server : Agent
                             } while (lobby.ContainsKey(id));
                         }
 
-                        if (!Rooms.ContainsKey(roomToJoin) || recentlyEndedRooms.Contains(roomToJoin))
+                        if (!Rooms.ContainsKey(roomToJoin))
                         {
                             if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
                             else if (client is TcpClient tcpClient) tcpClient.Close();

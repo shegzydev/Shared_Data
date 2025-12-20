@@ -201,7 +201,8 @@ public class GigNet
         NetworkManager.Instance.FixedUpdate();
     }
 
-#if SERVER || CLIENT
+//#if SERVER
+#if SERVER || !BLAZOR
     public static async Task Get(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
     {
         await SimpleWebRequest.Get(url, headers, onSuccess, onFailure, authToken);
