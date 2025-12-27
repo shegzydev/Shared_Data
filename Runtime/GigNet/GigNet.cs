@@ -201,26 +201,72 @@ public class GigNet
         NetworkManager.Instance.FixedUpdate();
     }
 
-//#if SERVER
+    static HashSet<long> retryErrors = new() { 429, 500, 502, 503, 504, 429, 408, 0, 409 };
+
+    //#if SERVER
 #if SERVER || !BLAZOR
-    public static async Task Get(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
+    public static async Task Get(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = true, int retries = 5)
     {
-        await SimpleWebRequest.Get(url, headers, onSuccess, onFailure, authToken);
+        await SimpleWebRequest.Get(url, headers, onSuccess, async (msg, code) =>
+        {
+            if (retryErrors.Contains(code) && retries > 0)
+            {
+                await Task.Delay(1000);
+                await Get(url, headers, onSuccess, onFailure, authToken: authToken, retries: retries - 1);
+            }
+            else
+            {
+                onFailure.Invoke(msg, code);
+            }
+        }, authToken);
     }
 
-    public static async Task Post(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
+    public static async Task Post(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = true, int retries = 5)
     {
-        await SimpleWebRequest.Post(url, jsonBody, headers, onSuccess, onFailure, authToken);
+        await SimpleWebRequest.Post(url, jsonBody, headers, onSuccess, async (msg, code) =>
+        {
+            if (retryErrors.Contains(code) && retries > 0)
+            {
+                await Task.Delay(1000);
+                await Post(url, jsonBody, headers, onSuccess, onFailure, authToken: authToken, retries: retries - 1);
+            }
+            else
+            {
+                onFailure.Invoke(msg, code);
+            }
+        }, authToken);
     }
 
-    public static async Task Patch(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
+    public static async Task Patch(string url, string jsonBody, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = true, int retries = 5)
     {
-        await SimpleWebRequest.Patch(url, jsonBody, headers, onSuccess, onFailure, authToken);
+        await SimpleWebRequest.Patch(url, jsonBody, headers, onSuccess, async (msg, code) =>
+        {
+            if (retryErrors.Contains(code) && retries > 0)
+            {
+                await Task.Delay(1000);
+                await Patch(url, jsonBody, headers, onSuccess, onFailure, authToken: authToken, retries: retries - 1);
+            }
+            else
+            {
+                onFailure.Invoke(msg, code);
+            }
+        }, authToken);
     }
 
-    public static async Task Delete(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = false)
+    public static async Task Delete(string url, Dictionary<string, string> headers, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "", bool shouldRetry = true, int retries = 5)
     {
-        await SimpleWebRequest.Delete(url, headers, onSuccess, onFailure, authToken);
+        await SimpleWebRequest.Delete(url, headers, onSuccess, async (msg, code) =>
+        {
+            if (retryErrors.Contains(code) && retries > 0)
+            {
+                await Task.Delay(1000);
+                await Delete(url, headers, onSuccess, onFailure, authToken: authToken, retries: retries - 1);
+            }
+            else
+            {
+                onFailure.Invoke(msg, code);
+            }
+        }, authToken);
     }
 
     public static void UploadImage(string url, string formFieldName, Dictionary<string, string> headers, Action onUploadStart, Action<string, long> onSuccess, Action<string, long> onFailure, string authToken = "")

@@ -1,4 +1,4 @@
-using System;
+//using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -11,6 +11,10 @@ public class BallSynchronizer : MonoBehaviour
     void Start()
     {
         radius = 0.0585f * 100 / 2;
+        foreach (var item in sourceBalls)
+        {
+            item.transform.GetChild(0).Rotate(Random.Range(0, 360), Random.Range(0, 360), Random.Range(0, 360), Space.World);
+        }
     }
 
     void Update()

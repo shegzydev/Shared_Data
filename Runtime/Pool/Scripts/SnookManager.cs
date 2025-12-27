@@ -352,40 +352,54 @@ public class SnookManager : MonoBehaviour
         // GUI.Label(new Rect(Screen.width / 2, 0, 100, 50), $"Player{turn}:{turnType[turn]}");
     }
 
+    byte[] buffer = new byte[16 * 2 * 4];
+    short[] tempShorts = new short[4];
+
     public byte[] GetBallsViewData()
     {
-        using (MemoryStream stream = new MemoryStream())
-        using (BinaryWriter binaryWriter = new BinaryWriter(stream))
+        int offset = 0;
+        for (int i = 0; i < balls.Length; i++)
         {
-            for (int i = 0; i < balls.Length; i++)
-            {
-                var data = balls[i].ballViewData;
-                binaryWriter.Write(data.velocity.x);
-                binaryWriter.Write(data.velocity.y);
-                binaryWriter.Write(data.velocity.z);
-                binaryWriter.Write(data.position.x);
-                binaryWriter.Write(data.position.y);
-                binaryWriter.Write(data.position.z);
-            }
-            return stream.ToArray();
+            var data = balls[i].ballViewData;
+
+            tempShorts[0] = Quantize(data.velocity.x);
+            tempShorts[1] = Quantize(data.velocity.y);
+            tempShorts[2] = Quantize(data.position.x);
+            tempShorts[3] = Quantize(data.position.y);
+
+            Buffer.BlockCopy(tempShorts, 0, buffer, offset, 8);
+            offset += 8;
         }
+        return buffer;
     }
 
+    short Quantize(float v) => (short)(v * 100f);
+    float Dequantize(short s) => s / 100f;
+
+    short[] temp = new short[4];
     public void SetBallsFromView(byte[] rawData)
     {
-        using (MemoryStream stream = new MemoryStream(rawData))
-        using (BinaryReader binaryReader = new BinaryReader(stream))
+        var vel = balls[15].speed;
+        int offset = 0;
+        for (int i = 0; i < balls.Length; i++)
         {
-            for (int i = 0; i < balls.Length; i++)
-            {
-                float vx = binaryReader.ReadSingle();
-                float vy = binaryReader.ReadSingle();
-                float vz = binaryReader.ReadSingle();
-                float px = binaryReader.ReadSingle();
-                float py = binaryReader.ReadSingle();
-                float pz = binaryReader.ReadSingle();
+            var xPos = balls[i].transform.position.x;
 
-                balls[i].SetBallFromViewData(new Vector3(vx, vy, vz), new Vector3(px, py, pz));
+            Buffer.BlockCopy(rawData, offset, temp, 0, 8);
+            balls[i].SetBallFromViewData(new Vector3(Dequantize(temp[0]), Dequantize(temp[1]), 0), new Vector3(Dequantize(temp[2]), Dequantize(temp[3]), 0));
+            offset += 8;
+
+            if (balls[i].transform.position.x > 100 && xPos < 100)
+            {
+                // Sounds.PlaySFX("pocket");
+            }
+
+            if (i == 15)
+            {
+                if (balls[i].speed > 0.1 && vel < 0.01)
+                {
+                    // Sounds.PlaySFX("cue_coll");
+                }
             }
         }
     }
@@ -406,8 +420,8 @@ public class SnookManager : MonoBehaviour
         }
     }
 
-    bool ballInHand = true;
-    bool breaking = true;
+    public bool ballInHand = true;
+    public bool breaking = true;
 
     public void SetState(byte[] data)
     {
@@ -420,6 +434,7 @@ public class SnookManager : MonoBehaviour
             pottedBallCount[1] = reader.ReadByte();
             SetTurn(reader.ReadByte());
             ballInHand = reader.ReadBoolean();
+            breaking = reader.ReadBoolean();
         }
     }
 }

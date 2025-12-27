@@ -40,7 +40,8 @@ public class SimpleWebSocket
         {
             await _client.ConnectAsync(new Uri(_url), _cts.Token);
             OnOpen?.Invoke();
-            _ = ReceiveLoop();
+            // _ = ReceiveLoop();
+            _ = Task.Run(ReceiveLoop);
         }
         catch (Exception ex)
         {
@@ -69,7 +70,64 @@ public class SimpleWebSocket
     }
 
 #if UNITY_WEBGL || NETSTANDARD || WASM
-    byte[] buffer = new byte[4096];
+    byte[] buffer = null;
+
+    private async Task ReceiveLoop()
+    {
+        if (buffer == null) buffer = new byte[8192];
+
+        try
+        {
+            while (_client.State == WebSocketState.Open)
+            {
+                WebSocketReceiveResult result;
+                int offset = 0;
+
+                do
+                {
+                    result = await _client.ReceiveAsync(
+                        new ArraySegment<byte>(buffer, offset, buffer.Length - offset),
+                        _cts.Token
+                    );
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        var code = (ushort)(result.CloseStatus ?? WebSocketCloseStatus.Empty);
+                        var reason = result.CloseStatusDescription ?? "Closed";
+                        OnClose?.Invoke(code, reason);
+                        await _client.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed", CancellationToken.None);
+                        return;
+                    }
+
+                    offset += result.Count;
+
+                    // Safety: resize if message is larger than buffer
+                    if (offset >= buffer.Length)
+                    {
+                        Array.Resize(ref buffer, buffer.Length * 2);
+                    }
+
+                } while (!result.EndOfMessage);
+
+                // COPY ONLY AFTER FULL MESSAGE
+                var data = new byte[offset];
+                Buffer.BlockCopy(buffer, 0, data, 0, offset);
+
+                // IMPORTANT: do NOT block here
+                OnMessage?.Invoke(data);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // normal on close
+        }
+        catch (Exception ex)
+        {
+            OnError?.Invoke(ex.Message);
+        }
+    }
+
+    /*
     private async Task ReceiveLoop()
     {
         if (buffer == null) buffer = new byte[4096];
@@ -98,7 +156,7 @@ public class SimpleWebSocket
         {
             OnError?.Invoke(ex.Message);
         }
-    }
+    }*/
 #endif
 
     public async Task SendAsync(byte[] data)

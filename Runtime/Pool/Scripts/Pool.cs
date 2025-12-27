@@ -34,6 +34,7 @@ public class Pool : MonoBehaviour
     public Action<(byte player, byte type)> OnAssign;
     public Action OnShoot;
     public Action OnRerack;
+    public Action<Vector3> OnPlaceCue;
 
     public bool Paused = false;
     void Awake()
@@ -62,6 +63,11 @@ public class Pool : MonoBehaviour
         snookManager.OnRerack = () =>
         {
             OnRerack?.Invoke();
+        };
+
+        cueball.OnPlaceCue = (pos) =>
+        {
+            OnPlaceCue?.Invoke(pos);
         };
     }
 
@@ -203,6 +209,7 @@ public class Pool : MonoBehaviour
     public void SetStateData(byte[] data)
     {
         snookManager.SetState(data);
+        cueball.breaking = snookManager.breaking;
     }
 
     public void SetCue(Vector3 pos)
@@ -254,6 +261,26 @@ public class Pool : MonoBehaviour
     public void ResetGravity()
     {
         cueball.ResetGravity();
+    }
+
+    public bool breaking => snookManager.breaking;
+    public bool ballInHand { get { return snookManager.ballInHand; } set { cueball.ballInHand = value; } }
+    public Vector3 cuePosition => cueball.transform.position;
+
+    public bool stickActive
+    {
+        set
+        {
+            cueball.stickActive = value;
+        }
+    }
+
+    public bool meterActive
+    {
+        set
+        {
+            cueball.meterActive = value;
+        }
     }
 
     public float aimAngle => cueball.aimAngle;

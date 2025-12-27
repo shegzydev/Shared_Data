@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using UnityEngine;
 
@@ -20,6 +21,8 @@ public class Cueball : Ball
     public float spinIntensity = 20;
 
     public Transform cueStick;
+    public Transform hand;
+    public Transform grabbedBall;
 #if CLIENT
     public GameObject powerBar;
 #endif
@@ -33,10 +36,12 @@ public class Cueball : Ball
     bool canPlay;
 
     public Action OnShoot;
+    public Action<Vector3> OnPlaceCue;
 
     float XInput;
     public void SetInput(float X)
     {
+        if (grabbingBall) return;
         XInput = X;
     }
     public void SetAngle(float _angle)
@@ -91,7 +96,21 @@ public class Cueball : Ball
         hitpoint = transform.position + perp * english * radius;
 
         ComputeInput(hitDir);
+
         TraceHitBall(hitDir);
+
+        GrabCueBall();
+
+        if (hand)
+        {
+            hand.gameObject.SetActive(ballInHand);
+            hand.position = grabbingBall ? grabbingPosition : transform.position;
+        }
+
+        if (grabbedBall)
+        {
+            grabbedBall.position = grabbingPosition;
+        }
     }
 
     protected override void FixedTick()
@@ -123,12 +142,19 @@ public class Cueball : Ball
     {
         cueStick.position = transform.position;
         cueStick.rotation = Quaternion.FromToRotation(cueStick.right, hitDir) * cueStick.rotation;
-
-        cueStick.gameObject.SetActive(canPlay);
+        cueStick.gameObject.SetActive(canPlay && stickActive && !grabbingBall);
 #if CLIENT
-        powerBar.SetActive(canPlay);
+        Lines.gameObject.SetActive(canPlay && stickActive && !grabbingBall);
+        powerBar.SetActive(canPlay && meterActive);
 #endif
     }
+
+    public bool stickActive;
+    public bool meterActive;
+    public bool ballInHand;
+    public bool breaking;
+    [SerializeField] bool grabbingBall;
+    Vector2 grabbingPosition = Vector3.one * 5000;
 
     public void Shoot(Vector3 _dir, Vector2 _spin, float _power)
     {
@@ -148,6 +174,54 @@ public class Cueball : Ball
         WaitTillBallStop();
 
         OnShoot?.Invoke();
+    }
+
+    void GrabCueBall()
+    {
+        if (Input.GetMouseButtonDown(0))
+        {
+            var projection = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+            var dist = Vector2.Distance(projection, transform.position);
+
+            if (ballInHand && dist < radius * 5)
+            {
+                grabbingBall = true;
+            }
+        }
+        else if (Input.GetMouseButton(0))
+        {
+            if (grabbingBall)
+            {
+                var pos = Camera.main.ScreenToWorldPoint(Input.mousePosition);
+
+                pos.x = Mathf.Clamp(pos.x, -95f + radius, (breaking ? -48f : 95f) - radius);
+                pos.y = Mathf.Clamp(pos.y, -42f + radius, 42f - radius);
+
+                grabbingPosition = pos;
+            }
+        }
+        else if (Input.GetMouseButtonUp(0))
+        {
+            if (grabbingBall)
+            {
+                bool canDrop = true;
+                var balls = FindObjectsByType<Ball>(FindObjectsSortMode.None);
+                foreach (var ball in balls)
+                {
+                    if (ball == this) continue;
+                    if (Vector2.Distance(grabbingPosition, ball.transform.position) < radius)
+                    {
+                        canDrop = false; break;
+                    }
+                }
+                if (canDrop)
+                {
+                    OnPlaceCue?.Invoke(grabbingPosition);
+                }
+            }
+            grabbingBall = false;
+            grabbingPosition.x = grabbingPosition.y = 5000;
+        }
     }
 
     void TraceHitBall(Vector3 dir)

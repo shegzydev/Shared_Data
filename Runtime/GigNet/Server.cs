@@ -21,6 +21,20 @@ internal class Server : Agent
         public long room;
         public float timer;
         public bool active;
+
+        public void Clean()
+        {
+            if (socket is IWebSocketConnection wsClient)
+            {
+                if (wsClient.IsAvailable)
+                    wsClient?.Close(1000);
+            }
+            else if (socket is TcpClient tcpClient)
+            {
+                if (tcpClient.Connected)
+                    tcpClient?.Close();
+            }
+        }
     }
 
     public static Server ServerInstance;
@@ -169,6 +183,7 @@ internal class Server : Agent
         for (int i = 0; i < Rooms[room].playerCount; i++)
         {
             var client = Rooms[room][i];
+            lobby[client].Clean();
             lobby.Remove(client, out var _);
         }
 

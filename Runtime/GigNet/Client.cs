@@ -159,6 +159,7 @@ internal class Client : Agent
 #elif RELEASE
             GigNet.Log?.Invoke("Connecting to " + $"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
             wsClient = new SimpleWebSocket($"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
+            // wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port + 6}");
 #endif
             // #endif
             wsClient.OnOpen += () =>
@@ -325,7 +326,7 @@ internal class Client : Agent
             {
                 try
                 {
-                    wsClient.SendAsync(data);
+                    _ = wsClient.SendAsync(data);
                     OutGoingData += data.Length;
                 }
                 catch (Exception ex)

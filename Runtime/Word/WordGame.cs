@@ -186,8 +186,8 @@ public class WordGame
     {
         if (endgame) return;
 
-        LogAction?.Invoke(LogType.Log, $"chosen: {index}");
-        LogAction?.Invoke(LogType.Log, $"{letters[player][index]}");
+        // LogAction?.Invoke(LogType.Log, $"chosen: {index}");
+        // LogAction?.Invoke(LogType.Log, $"{letters[player][index]}");
 
         letters[player][index].chosen = true;
         letters[player][index].pos = index;
@@ -195,7 +195,7 @@ public class WordGame
         formedWord[player].Add(letters[player][index]);
         word[player].Append(letters[player][index]);
 
-        LogAction?.Invoke(LogType.Log, word[player].ToString());
+        // LogAction?.Invoke(LogType.Log, word[player].ToString());
 
         OnStateUpdate?.Invoke(roomID, player, GetDrawingData());
     }
@@ -210,7 +210,7 @@ public class WordGame
         formedWord[player].RemoveAt(index);
         word[player].Remove(index, 1);
 
-        LogAction?.Invoke(LogType.Log, word[player].ToString());
+        // LogAction?.Invoke(LogType.Log, word[player].ToString());
 
         OnStateUpdate?.Invoke(roomID, player, GetDrawingData());
     }
