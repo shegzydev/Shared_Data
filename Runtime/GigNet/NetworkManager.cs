@@ -453,6 +453,10 @@ public class CoroutineRunnner
                     await Task.Delay(10);
                 }
             }
+            else if (yield is null)
+            {
+                await Task.Yield();
+            }
             else
             {
                 await Task.Yield();
@@ -467,6 +471,11 @@ public class CoroutineRunnner
         public WaitForSeconds(float seconds)
         {
             Milliseconds = (int)(seconds * 1000);
+        }
+
+        public WaitForSeconds(TimeSpan timeSpan)
+        {
+            Milliseconds = timeSpan.Seconds * 1000;
         }
     }
     public class WaitUntil

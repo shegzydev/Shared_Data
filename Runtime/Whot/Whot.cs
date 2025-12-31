@@ -1,12 +1,13 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 
 public enum WhotNetEvents : byte
 {
-    Play, Pick, Call, Turn, Timer, GameOver, Message, State, StateSync
+    Play, Pick, Call, Turn, Timer, GameOver, Message, State, StateSync, DROP20, CallSuit
 }
 
 public class Whot
@@ -94,17 +95,26 @@ public class Whot
     float timer = 15, lastTime = 0;
     bool endGame;
 
+    Suit NextSuit = Suit.NIL;
+    bool waitingForSuitSelect;
+
     public event Action<int, int> OnPassMessage;
     public event Action<int, byte[]> OnEndGame;
     public event Action<int> OnTurnUpdate;
     public event Action<float> OnTimerUpdate;
     public event Action<(int handPosition, int player)> OnPlay;
-    public event Action<Card> OnUpdateCall;
+    public event Action<(Card card, int player)> OnUpdateCall;
+
     public event Action<(Card card, int id, int player, bool market)> OnPickCard;
+    public event Action<(int player, bool market)> OnServerPickCard;
+
     public event Action OnSync;
     public event Action<byte[]> OnGameStateUpdate;
     public event Action<DrawData> OnDrawStateUpdate;
     public event Action<int> OnDrop20;
+    public event Action<(int suit, int player)> OnCalledSuit;
+
+    HashSet<int> leftPlayers = new();
 
     public Whot(int numplayers)
     {
@@ -123,7 +133,7 @@ public class Whot
         }
 
         played.Push(deck.Dequeue());
-        OnUpdateCall?.Invoke(cards[played.Peek()]);
+        OnUpdateCall?.Invoke((cards[played.Peek()], 0));
 
         hands = new List<int>[numplayers];
         for (int i = 0; i < numplayers; i++)
@@ -153,7 +163,7 @@ public class Whot
         }
 
         played.Push(deck.Dequeue());
-        OnUpdateCall?.Invoke(cards[played.Peek()]);
+        OnUpdateCall?.Invoke((cards[played.Peek()], 0));
 
         hands = new List<int>[numplayers];
         for (int i = 0; i < numplayers; i++)
@@ -172,7 +182,10 @@ public class Whot
 
     public bool Play(int player, int handIndex)
     {
-        if (player != turn) return false;
+        if (player != turn)
+        {
+            return false;
+        }
 
         int card = hands[player][handIndex];
         int last = played.Peek();
@@ -186,10 +199,22 @@ public class Whot
                 if (cards[last].Number == 5 && cards[card].Number != 5) return false;
             }
 
-            if (cards[last].Suit != cards[card].Suit
-                && cards[last].Number != cards[card].Number)
+            if (NextSuit == Suit.NIL)
             {
-                return false;
+                bool cardsUnmatch = cards[last].Suit != cards[card].Suit
+                    && cards[last].Number != cards[card].Number;
+
+                if (cardsUnmatch)
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                if (cards[card].Suit != NextSuit)
+                {
+                    return false;
+                }
             }
         }
         else
@@ -198,7 +223,7 @@ public class Whot
         }
 
         played.Push(card);
-        OnUpdateCall?.Invoke(cards[card]);
+        OnUpdateCall?.Invoke((cards[card], player));
 
         hands[player].RemoveAt(handIndex);
         OnPlay?.Invoke((handIndex, player));
@@ -237,30 +262,37 @@ public class Whot
         else if (is20)
         {
             CoroutineRunnner.StartCoroutine(WaitForNextSuit());
+            OnDrop20?.Invoke(player);
         }
         else
         {
             NextTurn();
         }
 
+        NextSuit = Suit.NIL;
         OnGameStateUpdate?.Invoke(GetState());
         return true;
     }
 
-
-    Suit NextSuit = Suit.NIL;
     IEnumerator WaitForNextSuit()
     {
+        timer = 15;
         NextSuit = Suit.NIL;
+        waitingForSuitSelect = true;
+
         while (NextSuit == Suit.NIL)
         {
-            yield return new CoroutineRunnner.WaitForSeconds(0.016f);
+            yield return null;
         }
+
+        waitingForSuitSelect = false;
     }
 
-    public void ChooseNextSuit(Suit suit)
+    public void ChooseNextSuit(Suit suit, int player)
     {
         NextSuit = suit;
+        NextTurn();
+        OnCalledSuit?.Invoke(((int)NextSuit, player));
     }
 
     bool HasFollowUpForHold(Suit lastSuit)
@@ -294,7 +326,10 @@ public class Whot
 
     public void Pick(int player)
     {
-        if (player != turn) return;
+        if (player != turn)
+        {
+            return;
+        }
 
         for (int i = 0; i < toPickByNext; i++)
         {
@@ -306,6 +341,7 @@ public class Whot
         }
         toPickByNext = 1;
 
+        OnServerPickCard?.Invoke((player, false));
 
         if (!DeckEmpty())
         {
@@ -331,6 +367,7 @@ public class Whot
             if (deck.TryDequeue(out int picked))
             {
                 hands[i].Add(picked);
+                OnServerPickCard?.Invoke((i, true));
                 OnPickCard?.Invoke((cards[picked], picked, i, true));
             }
         }
@@ -412,8 +449,16 @@ public class Whot
             return;
         }
 
-        turn++;
-        turn %= numplayers;
+        int safeGuard = numplayers + 1;
+        do
+        {
+            turn++;
+            turn %= numplayers;
+
+            if ((--safeGuard) == 0) break;
+
+        } while (leftPlayers.Contains(turn));
+
         ValidateTurnChange();
     }
 
@@ -421,7 +466,6 @@ public class Whot
     {
         return hands[turn].Count == 0;
     }
-
     void ValidateTurnChange()
     {
         timer = 15;
@@ -434,17 +478,22 @@ public class Whot
 
         lastTime = timer;
         timer -= delta;
-        if ((int)timer != (int)lastTime)
-        {
-            OnTimerUpdate?.Invoke(timer / 15);
-        }
+        OnTimerUpdate?.Invoke(timer / 15);
+
         if (timer <= 0)
         {
-            Pick(turn);
+            if (waitingForSuitSelect)
+            {
+                ChooseNextSuit((Suit)UnityEngine.Random.Range(0, 5), turn);
+            }
+            else
+            {
+                Pick(turn);
+            }
         }
     }
 
-    public int DeckSize => deck.Count;
+    public int DeckSize => deck != null ? deck.Count : 52;
     public int[] handsSize
     {
         get
@@ -503,6 +552,12 @@ public class Whot
             //end game
             writer.Write(endGame);
 
+            //Next Suit
+            writer.Write((int)NextSuit);
+
+            //nextPicks
+            writer.Write(toPickByNext);
+
             return stream.ToArray();
         }
     }
@@ -560,6 +615,12 @@ public class Whot
 
             // endGame
             endGame = reader.ReadBoolean();
+
+            //Next Suit
+            NextSuit = (Suit)reader.ReadInt32();
+
+            //nextPicks
+            toPickByNext = reader.ReadInt32();
         }
 
         OnDrawStateUpdate?.Invoke(GetDrawData());
@@ -612,6 +673,29 @@ public class Whot
             return tmpCards;
         }
     }
+
+    public int getTurn => turn;
+
+    public int lastCard => played.Peek();
+    public Suit mustSuit => NextSuit;
+    public List<int> currentHand => hands[turn];
+    public Card[] gameCards => cards;
+
+    public void RemovePlayer(int player)
+    {
+        leftPlayers.Add(player);
+    }
+    public void RestorePlayer(int player)
+    {
+        leftPlayers.Remove(player);
+    }
+
+    public void SetTurn(int turn)
+    {
+        this.turn = turn;
+    }
+
+    public int removedPlayers => leftPlayers.Count;
 }
 
 internal static class ListExtensions

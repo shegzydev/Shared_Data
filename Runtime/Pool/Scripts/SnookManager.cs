@@ -391,14 +391,14 @@ public class SnookManager : MonoBehaviour
 
             if (balls[i].transform.position.x > 100 && xPos < 100)
             {
-                // Sounds.PlaySFX("pocket");
+                // SoundManager.play("pocket");
             }
 
             if (i == 15)
             {
                 if (balls[i].speed > 0.1 && vel < 0.01)
                 {
-                    // Sounds.PlaySFX("cue_coll");
+                    // SoundManager.PlaySFX("cue_coll");
                 }
             }
         }

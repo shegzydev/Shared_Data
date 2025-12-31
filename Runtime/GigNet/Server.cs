@@ -54,7 +54,6 @@ internal class Server : Agent
     ConcurrentQueue<long> reconnectionEventQueue = new();
 
     Dictionary<long, Room> Rooms = new() { { 12345, new Room(1, 1, true, null) } };
-    // HashSet<long> recentlyEndedRooms = new();
     Queue<(long roomID, DateTime expirationTime)> expiryQueue = new();
 
     private readonly object lobbyLock = new();
@@ -65,6 +64,10 @@ internal class Server : Agent
 
     public static int[] roomSizes;
     static ThreadLocal<System.Random> threadRandom = new ThreadLocal<System.Random>(() => new System.Random());
+
+    ConcurrentQueue<(object client, byte[] dataPack)> SendQueue = new();
+    SemaphoreSlim SendSignal = new(0);
+    CancellationTokenSource SendCancellationToken = new();
 
     public Server(RPCRouter rPCRouter, int port, bool enableAudio)
     {
@@ -97,6 +100,14 @@ internal class Server : Agent
 
         serverBridge.Start();
 
+        Task.Run(() => SendLoop(SendCancellationToken.Token)).ContinueWith(task =>
+        {
+            if (task.IsFaulted)
+            {
+                GigNet.Log?.Invoke("Sending Loop is Jammed");
+            }
+        });
+
         if (enableAudio) audioUdp = new AudUDP(port + 1);
     }
 
@@ -127,45 +138,16 @@ internal class Server : Agent
 
     void SendMessageTo(long clientID, byte[] data)
     {
-        Task.Run(() =>
+        ClientData client = null;
+        lock (lobbyLock)
         {
-            ClientData client = null;
-            lock (lobbyLock)
-            {
-                if (!lobby.TryGetValue(clientID, out client)) return;
-            }
+            if (!lobby.TryGetValue(clientID, out client)) return;
+        }
 
-            if (!client.active) return;
+        if (!client.active) return;
 
-            if (client.socket is IWebSocketConnection wsClient)
-            {
-                if (wsClient.IsAvailable)
-                {
-                    try
-                    {
-                        wsClient.Send(data);
-                    }
-                    catch (Exception)
-                    {
-
-                    }
-                }
-            }
-            else if (client.socket is TcpClient tcpClient)
-            {
-                if (tcpClient.Connected)
-                {
-                    try
-                    {
-                        tcpClient.GetStream().Write(data);
-                    }
-                    catch (Exception)
-                    {
-
-                    }
-                }
-            }
-        });
+        SendQueue.Enqueue((client.socket, data));
+        SendSignal.Release();
     }
 
     void SendMessage(byte[] data)
@@ -197,6 +179,7 @@ internal class Server : Agent
     public override void CleanUp()
     {
         GigNet.Log?.Invoke("Cleaning up");
+        SendCancellationToken.Cancel();
         tcp?.CleanUp();
         udp?.CleanUp();
         ws?.CleanUp();
@@ -204,6 +187,30 @@ internal class Server : Agent
         serverBridge?.CleanUp();
     }
 
+
+    async Task SendLoop(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            await SendSignal.WaitAsync();
+
+            while (SendQueue.TryDequeue(out var data))
+            {
+                try
+                {
+                    if (data.client is IWebSocketConnection ws)
+                    {
+                        await ws.Send(data.dataPack);
+                    }
+                    else if (data.client is TcpClient tcp)
+                    {
+                        await tcp.GetStream().WriteAsync(data.dataPack);
+                    }
+                }
+                catch { }
+            }
+        }
+    }
     public override void Tick()
     {
         lock (lobbyLock)
