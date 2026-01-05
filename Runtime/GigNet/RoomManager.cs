@@ -28,6 +28,8 @@ public class Room
     Dictionary<long, int> playerIds = new();
     Dictionary<string, string> extraData = new();
 
+    public DateTime creationTime;
+
     public Room(int _capacity, int _bots, bool _botWin, Dictionary<long, PlayerData> _names, Dictionary<string, string> extras = null)
     {
         if (_names != null) { dataDict = _names; }
@@ -36,6 +38,7 @@ public class Room
         capacity = _capacity;
         clientIDs = new long[capacity];
         extraData = extras;
+        creationTime = DateTime.UtcNow;
     }
 
     public bool filled => playerIds.Count == capacity;

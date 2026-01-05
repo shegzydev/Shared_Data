@@ -121,6 +121,7 @@ public class GigNet
     public static int ping;
 
     public static Action<bool> OnTimeOut;
+    public static Action OnForceQuit;
     public static Action<Dictionary<int, (string name, string avatar)>> OnRoomFilled;
     public static void Init(string gameName, int port)
     {

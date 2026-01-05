@@ -22,6 +22,9 @@ internal class Server : Agent
         public float timer;
         public bool active;
 
+        public readonly SemaphoreSlim clientLock = new(1, 1);
+        public int pendingMessages;
+
         public void Clean()
         {
             if (socket is IWebSocketConnection wsClient)
@@ -34,6 +37,7 @@ internal class Server : Agent
                 if (tcpClient.Connected)
                     tcpClient?.Close();
             }
+            clientLock.Dispose();
         }
     }
 
@@ -57,7 +61,7 @@ internal class Server : Agent
     Queue<(long roomID, DateTime expirationTime)> expiryQueue = new();
 
     private readonly object lobbyLock = new();
-    static Dictionary<long, ClientData> lobby = new();
+    static ConcurrentDictionary<long, ClientData> lobby = new();
 
     long currRoomIndex;
     public static GameAgent_Server serv;
@@ -65,8 +69,9 @@ internal class Server : Agent
     public static int[] roomSizes;
     static ThreadLocal<System.Random> threadRandom = new ThreadLocal<System.Random>(() => new System.Random());
 
-    ConcurrentQueue<(object client, byte[] dataPack)> SendQueue = new();
+    ConcurrentQueue<(long clientId, byte[] dataPack)> SendQueue = new();
     SemaphoreSlim SendSignal = new(0);
+    SemaphoreSlim _sendConcurrency = new SemaphoreSlim(200, 5000);
     CancellationTokenSource SendCancellationToken = new();
 
     public Server(RPCRouter rPCRouter, int port, bool enableAudio)
@@ -146,8 +151,9 @@ internal class Server : Agent
 
         if (!client.active) return;
 
-        SendQueue.Enqueue((client.socket, data));
+        SendQueue.Enqueue((clientID, data));
         SendSignal.Release();
+        Interlocked.Increment(ref client.pendingMessages);
     }
 
     void SendMessage(byte[] data)
@@ -187,56 +193,97 @@ internal class Server : Agent
         serverBridge?.CleanUp();
     }
 
-
     async Task SendLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            await SendSignal.WaitAsync();
-
-            while (SendQueue.TryDequeue(out var data))
+            try
             {
-                try
+                await SendSignal.WaitAsync(ct);
+
+                while (SendQueue.TryDequeue(out var data))
                 {
-                    if (data.client is IWebSocketConnection ws)
+                    await _sendConcurrency.WaitAsync(ct);
+                    _ = SendOneAsync(data).ContinueWith(_ =>
                     {
-                        await ws.Send(data.dataPack);
-                    }
-                    else if (data.client is TcpClient tcp)
-                    {
-                        await tcp.GetStream().WriteAsync(data.dataPack);
-                    }
+                        _sendConcurrency.Release();
+                    }, TaskContinuationOptions.ExecuteSynchronously);
                 }
-                catch { }
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch
+            {
+
             }
         }
     }
+
+    async Task SendOneAsync((long clientId, byte[] dataPack) data)
+    {
+        if (!lobby.TryGetValue(data.clientId, out var client)) return;
+        bool locked = false;
+        try
+        {
+            await client.clientLock.WaitAsync();
+
+            locked = true;
+
+            var socket = client.socket;
+
+            if (socket is IWebSocketConnection ws)
+            {
+                await ws.Send(data.dataPack);
+            }
+            else if (socket is TcpClient tcp)
+            {
+                await tcp.GetStream().WriteAsync(data.dataPack);
+            }
+
+        }
+        catch
+        {
+
+        }
+        finally
+        {
+            if (locked && client != null)
+                client.clientLock.Release();
+
+            if (client != null)
+            {
+                Interlocked.Decrement(ref client.pendingMessages);
+            }
+        }
+    }
+
+    static readonly List<long> incompleteRooms = new List<long>();
+
     public override void Tick()
     {
-        lock (lobbyLock)
+        var timerKeys = lobby.Keys;
+        foreach (var entry in timerKeys)
         {
-            var timerKeys = lobby.Keys;
-            foreach (var entry in timerKeys)
-            {
-                var client = lobby[entry];
-                if (client.timer < 0) continue;
+            var client = lobby[entry];
+            if (client.timer < 0) continue;
 
-                if (client.timer >= 5f)
+            if (client.timer >= 5f)
+            {
+                Debug.Log($"Client {entry} timed out");
+                try
                 {
-                    Debug.Log($"Client {entry} timed out");
-                    try
-                    {
-                        if (client.socket is IWebSocketConnection wsClient) { wsClient.Close(1006); }
-                        else if (client.socket is TcpClient tcpClient) { tcpClient.Close(); }
-                    }
-                    catch { }
-                    disconnectionEventQueue.Enqueue(entry);
-                    client.timer = -10;
-                    client.active = false;
-                    continue;
+                    if (client.socket is IWebSocketConnection wsClient) { wsClient.Close(1006); }
+                    else if (client.socket is TcpClient tcpClient) { tcpClient.Close(); }
                 }
-                client.timer += Time.deltaTime;
+                catch { }
+                disconnectionEventQueue.Enqueue(entry);
+                client.timer = -10;
+                client.active = false;
+                continue;
             }
+            client.timer += Time.deltaTime;
         }
 
         while (roomQueue.TryDequeue(out var result))
@@ -279,6 +326,28 @@ internal class Server : Agent
             serv.OnPlayerReconnect(roomID, room.GetClientIDInRoom(ID));
         }
 
+        //Release Room wey players no complete
+        incompleteRooms.Clear();
+        var presentTime = DateTime.UtcNow;
+        foreach (var kvp in Rooms)
+        {
+            var room = kvp.Value;
+            if (!room.filled && room.playerCount > 0 &&
+                presentTime - room.creationTime >= TimeSpan.FromMinutes(1))
+            {
+                incompleteRooms.Add(kvp.Key);
+            }
+        }
+
+        foreach (var item in incompleteRooms)
+        {
+            var packType = BitConverter.GetBytes((int)PackType.ForceQuit);
+            var data = Util.MergeArrays(BitConverter.GetBytes(packType.Length), packType);
+            // SendTCPMessageToRoom(item, data);
+            CleanupRoom(item);
+        }
+
+        //Release Expired Rooms
         var now = DateTimeOffset.UtcNow;
         while (expiryQueue.Count > 0 && expiryQueue.Peek().expirationTime <= now)
         {
@@ -301,7 +370,7 @@ internal class Server : Agent
 
         if (room.filled)
         {
-            var names = room.GetNames();
+            /*var names = room.GetNames();
             var filledData = Util.MergeArrays(BitConverter.GetBytes(4 + names.Length), BitConverter.GetBytes((int)PackType.RoomFilled), names);
 
             for (int i = 0; i < room.playerCount; i++)
@@ -312,12 +381,31 @@ internal class Server : Agent
 
             serv.CreateRoom(id, room.capacity, room.botCount, room.botWins);
 
-            serv.OnFilledRoom(id, room);
+            serv.OnFilledRoom(id, room);*/
+
+            OnRoomComplete(id);
 
             OnRoomFull?.Invoke();
         }
 
         return true;
+    }
+
+    void OnRoomComplete(long id)
+    {
+        var room = Rooms[id];
+        var names = room.GetNames();
+        var filledData = Util.MergeArrays(BitConverter.GetBytes(4 + names.Length), BitConverter.GetBytes((int)PackType.RoomFilled), names);
+
+        for (int i = 0; i < room.playerCount; i++)
+        {
+            SendMessageTo(room[i], filledData);
+            Debug.Log($"notified player {room[i]} of room filled");
+        }
+
+        serv.CreateRoom(id, room.capacity, room.botCount, room.botWins);
+
+        serv.OnFilledRoom(id, room);
     }
 
     void GenerateRoom(long id, int playerCount, int botCount, bool botWins, JSONNode participants, Dictionary<string, string> extras)

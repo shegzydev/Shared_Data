@@ -241,12 +241,12 @@ public class Whot
             OnPassMessage?.Invoke(0, turn);
             NextTurn();
         }
-        else if (cards[card] == 5)
-        {
-            toPickByNext = 3;
-            OnPassMessage?.Invoke(1, turn);
-            NextTurn();
-        }
+        // else if (cards[card] == 5)
+        // {
+        //     toPickByNext = 3;
+        //     OnPassMessage?.Invoke(1, turn);
+        //     NextTurn();
+        // }
         else if (cards[card] == 8)
         {
             if (!NextPlayerHas8())

@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -19,7 +20,7 @@ public enum TargetGroup
 
 internal enum PackType
 {
-    RPC, IDAssignment, Instantiation, Heartbeat, Destroy, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom
+    RPC, IDAssignment, Instantiation, Heartbeat, Destroy, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom, ForceQuit
 }
 
 internal enum ActionType
@@ -43,6 +44,7 @@ internal class NetworkManager
     public ServerIP ServerEnum;
     string serverIP = "192.168.1.100";
     public string gameName = "word";
+    Stopwatch stopwatch;
 #endif
     public int port = 7778;
 #if SERVER
@@ -120,11 +122,6 @@ internal class NetworkManager
         networkObjects[netObject.OwnerID] = netObject;
     }
 
-    void Start()
-    {
-
-    }
-
     IEnumerator heartbeatRoutine;
     public void TryConnect(string url = "", long roomToConnect = -1, long idToBeAssigned = -1)
     {
@@ -146,6 +143,8 @@ internal class NetworkManager
             heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat(1));
         };
         agent = new Client(rpcRouter, url, port, enableAudio, roomToConnect);
+
+        stopwatch = Stopwatch.StartNew();
 #endif
     }
 
@@ -159,6 +158,14 @@ internal class NetworkManager
     {
         HandleQueues();
         agent?.Tick();
+#if CLIENT
+        if (stopwatch.IsRunning &&
+         stopwatch.Elapsed >= TimeSpan.FromSeconds(90))
+        {
+            GigNet.OnForceQuit?.Invoke();
+            stopwatch.Stop();
+        }
+#endif
     }
 
     public void FixedUpdate()
@@ -257,6 +264,10 @@ internal class NetworkManager
                         }
 #if CLIENT
                         GigNet.OnRoomFilled?.Invoke(names);
+                        if (stopwatch.IsRunning)
+                        {
+                            stopwatch.Stop();
+                        }
 #endif
                         break;
                     }
@@ -335,7 +346,15 @@ internal class NetworkManager
             if (Time.time - time > timeOutInSeconds)
             {
                 missedBeat++;
-                if (missedBeat > 5.1f) { GigNet.OnTimeOut?.Invoke(true); }
+                if (missedBeat > 5)
+                {
+                    GigNet.OnTimeOut?.Invoke(true);
+                    if (missedBeat == 16)
+                    {
+                        GigNet.OnForceQuit?.Invoke();
+                        break;
+                    }
+                }
             }
             else
             {
