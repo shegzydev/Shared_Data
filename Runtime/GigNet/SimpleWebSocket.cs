@@ -2,6 +2,8 @@ using System;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;
+
 
 #if UNITY_WEBGL || NETSTANDARD || WASM
 using System.Net.WebSockets;
@@ -14,6 +16,7 @@ public class SimpleWebSocket
     public event Action OnOpen;
     public event Action<byte[]> OnMessage;
     public event Action<string> OnError;
+    public event Action<string> OnLog;
     public event Action<ushort, string> OnClose;
 
     private string _url;
@@ -78,6 +81,8 @@ public class SimpleWebSocket
 
         try
         {
+            Stopwatch stopwatch = Stopwatch.StartNew();
+
             while (_client.State == WebSocketState.Open)
             {
                 WebSocketReceiveResult result;
@@ -105,6 +110,7 @@ public class SimpleWebSocket
                     if (offset >= buffer.Length)
                     {
                         Array.Resize(ref buffer, buffer.Length * 2);
+                        OnLog?.Invoke("Message exceeded buffer size, resizing buffer to " + buffer.Length + " bytes");
                     }
 
                 } while (!result.EndOfMessage);
@@ -115,6 +121,9 @@ public class SimpleWebSocket
 
                 // IMPORTANT: do NOT block here
                 OnMessage?.Invoke(data);
+
+                OnLog?.Invoke($"Received message of {data.Length} bytes in {stopwatch.ElapsedMilliseconds} ms");
+                stopwatch.Restart();
             }
         }
         catch (OperationCanceledException)

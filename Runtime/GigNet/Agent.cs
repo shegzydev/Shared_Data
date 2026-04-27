@@ -8,8 +8,8 @@ internal class Agent
     protected float IncomingData = 0;
     protected float OutGoingData = 0;
     public long session { get; protected set; }
-    public static bool receivedHeartbeat { get; protected set; }
-    public static void ResetHeartBeat() { receivedHeartbeat = false; }
+    public static double receivedHeartbeat { get; set; }
+    public static void ResetHeartBeat() {  }
     public virtual void Tick() { }
     public virtual void FixedTick() { }
     public virtual void SendTCPMessage(byte[] data) { }

@@ -93,7 +93,7 @@ internal static class WebImageUploader
 
             try
             {
-                byte[] fileBytes = File.ReadAllBytes(path);
+                /*byte[] fileBytes = File.ReadAllBytes(path);
 
                 Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                 if (!tex.LoadImage(fileBytes))
@@ -105,7 +105,54 @@ internal static class WebImageUploader
                 byte[] pngBytes = tex.EncodeToPNG();
                 UnityEngine.Object.Destroy(tex);
 
-                onImageReady?.Invoke(pngBytes);
+                onImageReady?.Invoke(pngBytes);*/
+
+                byte[] fileBytes = File.ReadAllBytes(path);
+
+                Texture2D tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!tex.LoadImage(fileBytes))
+                {
+                    onFailure?.Invoke("Failed to load image", 0);
+                    return;
+                }
+
+                // 🔹 Target max size
+                int maxWidth = 512;
+                int maxHeight = 512;
+
+                // 🔹 Preserve aspect ratio
+                float ratio = Mathf.Min(
+                    (float)maxWidth / tex.width,
+                    (float)maxHeight / tex.height
+                );
+
+                int newWidth = Mathf.RoundToInt(tex.width * ratio);
+                int newHeight = Mathf.RoundToInt(tex.height * ratio);
+
+                // 🔹 Resize using GPU
+                RenderTexture rt = RenderTexture.GetTemporary(newWidth, newHeight);
+                Graphics.Blit(tex, rt);
+
+                RenderTexture previous = RenderTexture.active;
+                RenderTexture.active = rt;
+
+                Texture2D resized = new Texture2D(newWidth, newHeight, TextureFormat.RGB24, false);
+                resized.ReadPixels(new Rect(0, 0, newWidth, newHeight), 0, 0);
+                resized.Apply();
+
+                RenderTexture.active = previous;
+                RenderTexture.ReleaseTemporary(rt);
+
+                // 🔹 Encode as JPEG (quality 0–100)
+                int quality = 50;
+                byte[] jpgBytes = resized.EncodeToJPG(quality);
+
+                // 🔹 Cleanup
+                UnityEngine.Object.Destroy(tex);
+                UnityEngine.Object.Destroy(resized);
+
+                // 🔹 Return
+                onImageReady?.Invoke(jpgBytes);
             }
             catch (Exception ex)
             {

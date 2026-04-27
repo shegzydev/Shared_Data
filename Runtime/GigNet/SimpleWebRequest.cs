@@ -160,6 +160,8 @@ internal static class SimpleWebRequest
             using (var cts = new CancellationTokenSource(10000))
             using (var request = new HttpRequestMessage(method, url))
             {
+                var finalCTS = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, NetworkManager.cts.Token);
+
                 // Add headers - separate content headers from request headers
                 if (headers != null)
                 {
@@ -190,7 +192,7 @@ internal static class SimpleWebRequest
 
                 GigNet.Log?.Invoke("Request packed");
 
-                using (var response = await httpClient.SendAsync(request, cts.Token))
+                using (var response = await httpClient.SendAsync(request, finalCTS.Token))
                 {
                     string responseText = await response.Content.ReadAsStringAsync();
                     long statusCode = (long)response.StatusCode;

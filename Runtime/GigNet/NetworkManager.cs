@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using SimpleJSON;
 
@@ -86,6 +87,8 @@ internal class NetworkManager
     Dictionary<int, NetworkObject> networkObjects = new();
     ConcurrentQueue<(ActionType eventType, object payload)> actionQueue = new();
 
+    internal static CancellationTokenSource cts = new CancellationTokenSource();
+
     public static void Init(string gameName, int port, bool isServer = true)
     {
         instance = new NetworkManager(gameName, port, isServer);
@@ -123,6 +126,7 @@ internal class NetworkManager
     }
 
     IEnumerator heartbeatRoutine;
+    IEnumerator timeoutRoutine;
     public void TryConnect(string url = "", long roomToConnect = -1, long idToBeAssigned = -1)
     {
 
@@ -130,6 +134,8 @@ internal class NetworkManager
         Server.roomSizes = RoomSizes;
         agent = new Server(rpcRouter, port, enableAudio);
 #elif CLIENT
+        cts = new CancellationTokenSource();
+
         GigNet.Log?.Invoke("I'm a client");
         serverIP = IPS[ServerEnum];
         Client.OnConnected = () => RequestID(roomToConnect, idToBeAssigned);
@@ -140,7 +146,10 @@ internal class NetworkManager
             GigNet.OnConnect?.Invoke();
 
             if (heartbeatRoutine != null) CoroutineRunnner.StopCoroutine(heartbeatRoutine);
-            heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat(1));
+            if (timeoutRoutine != null) CoroutineRunnner.StopCoroutine(timeoutRoutine);
+
+            heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat());
+            timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(30));
         };
         agent = new Client(rpcRouter, url, port, enableAudio, roomToConnect);
 
@@ -150,6 +159,7 @@ internal class NetworkManager
 
     public void TryDisconnect(Action OnDisconnect)
     {
+        // cts?.Cancel();
         agent?.CleanUp();
         OnDisconnect?.Invoke();
     }
@@ -331,37 +341,39 @@ internal class NetworkManager
     }
 
 #if CLIENT
-    public IEnumerator Heartbeat(int timeOutInSeconds = 1)
+    public IEnumerator Heartbeat()
     {
-        int missedBeat = 0;
-        while (true)
+        while (true && !cts.IsCancellationRequested)
         {
-            Agent.ResetHeartBeat();
             byte[] heartBeatPack = Util.MergeArrays(BitConverter.GetBytes(12), BitConverter.GetBytes((int)PackType.Heartbeat), BitConverter.GetBytes(DateTimeOffset.UtcNow.Ticks));
             agent?.SendTCPMessage(heartBeatPack);
-            double time = Time.time;
+            yield return new CoroutineRunnner.WaitForSeconds(2);
+        }
+    }
 
-            yield return new CoroutineRunnner.WaitUntil(() => Agent.receivedHeartbeat || Time.time - time > timeOutInSeconds);
+    public IEnumerator WatchTimeOut(float timeOutInSeconds = 30)
+    {
+        Agent.receivedHeartbeat = Time.time;
 
-            if (Time.time - time > timeOutInSeconds)
+        while (true && !cts.IsCancellationRequested)
+        {
+            var elapsed = Time.time - Agent.receivedHeartbeat;
+
+            if (elapsed > timeOutInSeconds * 2)
             {
-                missedBeat++;
-                if (missedBeat > 5)
-                {
-                    GigNet.OnTimeOut?.Invoke(true);
-                    if (missedBeat == 16)
-                    {
-                        GigNet.OnForceQuit?.Invoke();
-                        break;
-                    }
-                }
+                GigNet.OnForceQuit?.Invoke();
+                break;
+            }
+            else if (elapsed > timeOutInSeconds)
+            {
+                GigNet.OnTimeOut?.Invoke(true);
             }
             else
             {
-                missedBeat = 0;
                 GigNet.OnTimeOut?.Invoke(false);
             }
-            yield return new CoroutineRunnner.WaitForSeconds(Math.Max(0, timeOutInSeconds - (float)(Time.time - time)));
+
+            yield return null;
         }
     }
 #endif
@@ -433,7 +445,7 @@ internal class NetworkManager
 #if CLIENT
     public Action<(string ms_fps, string bandwidth)> OnGUILog;
 #endif
-    class Time
+    internal class Time
     {
         public static double time => DateTimeOffset.UtcNow.Ticks / (double)TimeSpan.TicksPerSecond;
     }
@@ -445,7 +457,7 @@ public class CoroutineRunnner
     public static IEnumerator StartCoroutine(IEnumerator routine)
     {
         _activeCoroutines.Add(routine);
-        _ = RunRoutine(routine);
+        _ = RunRoutine(routine, NetworkManager.cts.Token);
         return routine;
     }
 
@@ -453,7 +465,7 @@ public class CoroutineRunnner
     {
         _activeCoroutines?.Remove(routine);
     }
-    static async Task RunRoutine(IEnumerator routine)
+    static async Task RunRoutine(IEnumerator routine, CancellationToken token)
     {
         while (_activeCoroutines.Contains(routine))
         {
@@ -463,13 +475,13 @@ public class CoroutineRunnner
 
             if (yield is WaitForSeconds wait)
             {
-                await Task.Delay(wait.Milliseconds);
+                await Task.Delay(wait.Milliseconds, token);
             }
             else if (yield is WaitUntil waitUntil)
             {
                 while (!waitUntil.IsDone())
                 {
-                    await Task.Delay(10);
+                    await Task.Delay(10, token);
                 }
             }
             else if (yield is null)

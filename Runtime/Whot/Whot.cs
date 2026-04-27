@@ -103,7 +103,7 @@ public class Whot
     public event Action<int> OnTurnUpdate;
     public event Action<float> OnTimerUpdate;
     public event Action<(int handPosition, int player)> OnPlay;
-    public event Action<(Card card, int player)> OnUpdateCall;
+    public event Action<(Card card, int player, int cardIndex)> OnUpdateCall;
 
     public event Action<(Card card, int id, int player, bool market)> OnPickCard;
     public event Action<(int player, bool market)> OnServerPickCard;
@@ -133,13 +133,15 @@ public class Whot
         }
 
         played.Push(deck.Dequeue());
-        OnUpdateCall?.Invoke((cards[played.Peek()], 0));
+        OnUpdateCall?.Invoke((cards[played.Peek()], 0, -1));
+
+        var dealCards = numplayers > 2 ? 5 : 6;
 
         hands = new List<int>[numplayers];
         for (int i = 0; i < numplayers; i++)
         {
             hands[i] = new();
-            for (int j = 0; j < 6; j++)
+            for (int j = 0; j < dealCards; j++)
             {
                 int picked = deck.Dequeue();
                 hands[i].Add(picked);
@@ -163,13 +165,15 @@ public class Whot
         }
 
         played.Push(deck.Dequeue());
-        OnUpdateCall?.Invoke((cards[played.Peek()], 0));
+        OnUpdateCall?.Invoke((cards[played.Peek()], 0, -1));
+
+        var dealCards = numplayers > 2 ? 5 : 6;
 
         hands = new List<int>[numplayers];
         for (int i = 0; i < numplayers; i++)
         {
             hands[i] = new();
-            for (int j = 0; j < 6; j++)
+            for (int j = 0; j < dealCards; j++)
             {
                 int picked = deck.Dequeue();
                 hands[i].Add(picked);
@@ -223,7 +227,7 @@ public class Whot
         }
 
         played.Push(card);
-        OnUpdateCall?.Invoke((cards[card], player));
+        OnUpdateCall?.Invoke((cards[card], player, handIndex));
 
         hands[player].RemoveAt(handIndex);
         OnPlay?.Invoke((handIndex, player));
@@ -267,6 +271,16 @@ public class Whot
         else
         {
             NextTurn();
+        }
+
+        if (hands[player].Count == 2)
+        {
+            OnPassMessage?.Invoke(3, turn);
+        }
+
+        if (hands[player].Count == 1)
+        {
+            OnPassMessage?.Invoke(4, turn);
         }
 
         NextSuit = Suit.NIL;
@@ -449,7 +463,10 @@ public class Whot
             return;
         }
 
-        int safeGuard = numplayers + 1;
+        turn++;
+        turn %= numplayers;
+
+        /*int safeGuard = numplayers + 1;
         do
         {
             turn++;
@@ -457,7 +474,7 @@ public class Whot
 
             if ((--safeGuard) == 0) break;
 
-        } while (leftPlayers.Contains(turn));
+        } while (leftPlayers.Contains(turn));*/
 
         ValidateTurnChange();
     }

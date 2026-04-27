@@ -192,6 +192,11 @@ internal class Client : Agent
                 catch { }
             };
 
+            wsClient.OnLog += (log) =>
+            {
+                // GigNet.Log?.Invoke($"WS Log: {log}");
+            };
+
             wsClient.OnClose += (code, message) =>
             {
                 GigNet.Log?.Invoke($"🔌 Disconnected.{message}");
@@ -261,7 +266,7 @@ internal class Client : Agent
                                 var sendTime = BitConverter.ToInt64(data, 8);
                                 var ReceiveTime = DateTimeOffset.UtcNow.Ticks;
                                 NetworkManager.ms = (int)((ReceiveTime - sendTime) / TimeSpan.TicksPerMillisecond);
-                                receivedHeartbeat = true;
+                                receivedHeartbeat = NetworkManager.Time.time;
                                 break;
                             }
                         case PackType.Audio:
@@ -494,7 +499,7 @@ internal class Client : Agent
                     var ReceiveTime = DateTimeOffset.UtcNow.Ticks;
                     NetworkManager.ms = (int)((ReceiveTime - sendTime) / TimeSpan.TicksPerMillisecond);
                     GigNet.ping = (int)((ReceiveTime - sendTime) / TimeSpan.TicksPerMillisecond);
-                    receivedHeartbeat = true;
+                    receivedHeartbeat = NetworkManager.Time.time;
                     break;
                 }
             default:

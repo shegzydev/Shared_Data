@@ -27,6 +27,7 @@ public class Ball : MonoBehaviour
         rb = GetComponent<Rigidbody2D>();
         potSpawn = snookManager.potSpawn;
         Init();
+        lastArrivalTime = Time.time;
     }
 
     public void ResetBall()
@@ -75,7 +76,9 @@ public class Ball : MonoBehaviour
                 Debug.Log("potted");
                 transform.position = potSpawn.transform.position;
                 rb.linearVelocity = transform.right * rb.linearVelocity.magnitude;
+#if SERVER
                 rb.gravityScale = 10f;
+#endif
                 GetComponent<CircleCollider2D>().sharedMaterial = null;
                 snookManager.RegisterPot(this);
                 potted = true;
@@ -111,11 +114,16 @@ public class Ball : MonoBehaviour
     public float speed => rb.linearVelocity.magnitude;
 
     public View ballViewData => new View { velocity = rb.linearVelocity, position = rb.position };
+
+    float lastArrivalTime;
+    Vector3 lastReceivedVelocity, lastReceivedPosition;
+
     public void SetBallFromViewData(Vector3 vel, Vector3 pos)
     {
-        rb.linearVelocity = vel;
         rb.position = pos;
+        rb.linearVelocity = vel;
     }
+
     public struct View
     {
         public Vector3 velocity, position;
