@@ -92,7 +92,7 @@ public class Whot
     List<int>[] hands;
 
     int toPickByNext = 1;
-    float timer = 15, lastTime = 0;
+    float timer = 22, lastTime = 0;
     bool endGame;
     bool initting;
 
@@ -249,7 +249,8 @@ public class Whot
             if (HasFollowUpForHold(cards[card].Suit))
                 HoldOn();
             else
-                NextTurn();
+                Pick(turn);
+                // NextTurn();
         }
         else if (cards[card] == 2)
         {
@@ -355,38 +356,10 @@ public class Whot
                 OnPickCard?.Invoke((cards[picked], picked, player, false));
             }
         }
+
         toPickByNext = 1;
 
         OnServerPickCard?.Invoke((player, false));
-
-        if (!DeckEmpty())
-        {
-            NextTurn();
-            OnGameStateUpdate?.Invoke(GetState());
-        }
-        else
-        {
-            OnGameStateUpdate?.Invoke(GetState());
-            Tender();
-        }
-    }
-
-    public void PickGeneral(int player)
-    {
-        if (player != turn) return;
-
-        //Debug.Log("General Market");
-
-        for (int i = 0; i < numplayers; i++)
-        {
-            if (i == turn) continue;
-            if (deck.TryDequeue(out int picked))
-            {
-                hands[i].Add(picked);
-                OnServerPickCard?.Invoke((i, true));
-                OnPickCard?.Invoke((cards[picked], picked, i, true));
-            }
-        }
 
 #if SERVER
         if (!DeckEmpty())
@@ -400,6 +373,37 @@ public class Whot
             Tender();
         }
 #endif
+    }
+
+    public void PickGeneral(int player)
+    {
+        if (player != turn) return;
+
+        for (int i = 0; i < numplayers; i++)
+        {
+            if (i == turn) continue;
+            if (deck.TryDequeue(out int picked))
+            {
+                hands[i].Add(picked);
+                OnServerPickCard?.Invoke((i, true));
+                OnPickCard?.Invoke((cards[picked], picked, i, true));
+            }
+        }
+
+#if SERVER
+
+        if (!DeckEmpty())
+        {
+            HoldOn();
+            OnGameStateUpdate?.Invoke(GetState());
+        }
+        else
+        {
+            OnGameStateUpdate?.Invoke(GetState());
+            Tender();
+        }
+#endif
+
     }
 
     bool DeckEmpty()
@@ -496,11 +500,12 @@ public class Whot
     public void Ready()
     {
         initting = false;
+
     }
 
     public void UpdateTimer(float delta)
     {
-        if (endGame || initting) return;
+        if (endGame) return;
 
         lastTime = timer;
         timer -= delta;
