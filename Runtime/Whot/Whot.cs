@@ -7,7 +7,7 @@ using System.Linq;
 
 public enum WhotNetEvents : byte
 {
-    Play, Pick, Call, Turn, Timer, GameOver, Message, State, StateSync, DROP20, CallSuit
+    Play, Pick, Call, Turn, Timer, GameOver, Message, State, StateSync, DROP20, CallSuit, Ready
 }
 
 public class Whot
@@ -94,6 +94,7 @@ public class Whot
     int toPickByNext = 1;
     float timer = 15, lastTime = 0;
     bool endGame;
+    bool initting;
 
     Suit NextSuit = Suit.NIL;
     bool waitingForSuitSelect;
@@ -124,6 +125,8 @@ public class Whot
 
     public void Init()
     {
+        initting = true;
+
         deck = new Queue<int>();
         played = new Stack<int>();
 
@@ -232,6 +235,15 @@ public class Whot
         hands[player].RemoveAt(handIndex);
         OnPlay?.Invoke((handIndex, player));
 
+        if (hands[player].Count == 2)
+        {
+            OnPassMessage?.Invoke(3, turn);
+        }
+        if (hands[player].Count == 1)
+        {
+            OnPassMessage?.Invoke(4, turn);
+        }
+
         if (cards[card] == 1)
         {
             if (HasFollowUpForHold(cards[card].Suit))
@@ -271,16 +283,6 @@ public class Whot
         else
         {
             NextTurn();
-        }
-
-        if (hands[player].Count == 2)
-        {
-            OnPassMessage?.Invoke(3, turn);
-        }
-
-        if (hands[player].Count == 1)
-        {
-            OnPassMessage?.Invoke(4, turn);
         }
 
         NextSuit = Suit.NIL;
@@ -386,6 +388,7 @@ public class Whot
             }
         }
 
+#if SERVER
         if (!DeckEmpty())
         {
             NextTurn();
@@ -396,6 +399,7 @@ public class Whot
             OnGameStateUpdate?.Invoke(GetState());
             Tender();
         }
+#endif
     }
 
     bool DeckEmpty()
@@ -489,9 +493,14 @@ public class Whot
         OnTurnUpdate?.Invoke(turn);
     }
 
+    public void Ready()
+    {
+        initting = false;
+    }
+
     public void UpdateTimer(float delta)
     {
-        if (endGame) return;
+        if (endGame || initting) return;
 
         lastTime = timer;
         timer -= delta;
