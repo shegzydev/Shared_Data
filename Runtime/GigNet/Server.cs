@@ -12,6 +12,7 @@ using Fleck;
 using SimpleJSON;
 using System.IO;
 using System.Text;
+using System.Net.WebSockets;
 
 internal class Server : Agent
 {
@@ -43,10 +44,7 @@ internal class Server : Agent
 
     public static Server ServerInstance;
 
-    TCP tcp;
-    UDP udp;
     APIServerBridge serverBridge;
-    AudUDP audioUdp;
     WS ws;
 
     RPCRouter rpcRouter;
@@ -70,8 +68,8 @@ internal class Server : Agent
     static ThreadLocal<System.Random> threadRandom = new ThreadLocal<System.Random>(() => new System.Random());
 
     ConcurrentQueue<(long clientId, byte[] dataPack)> SendQueue = new();
-    SemaphoreSlim SendSignal = new(0);
-    SemaphoreSlim _sendConcurrency = new SemaphoreSlim(200, 5000);
+    // SemaphoreSlim SendSignal = new(0);
+    // SemaphoreSlim _sendConcurrency = new SemaphoreSlim(200, 5000);
     CancellationTokenSource SendCancellationToken = new();
 
     public Server(RPCRouter rPCRouter, int port, bool enableAudio)
@@ -94,10 +92,10 @@ internal class Server : Agent
 
         //tcp = new TCP(port);
         // udp = new UDP(port);
-        ws = new WS(port);
+        // ws = new WS(port);
 
         serverBridge = new APIServerBridge(port);
-        serverBridge.OnRequestReceived += (path, method, body) =>
+        serverBridge.OnRequestReceived += (body) =>
         {
             var json = JSON.Parse(body);
             GenerateRoom(json["lobbyId"].AsLong, json["realPlayers"], json["botCount"], json["botWins"], json["participants"], json.HasKey("tournamentId") ? new Dictionary<string, string> { { "tournamentId", json["tournamentId"].ToString() } } : null);
@@ -112,13 +110,6 @@ internal class Server : Agent
                 GigNet.Log?.Invoke("Sending Loop is Jammed");
             }
         });
-
-        if (enableAudio) audioUdp = new AudUDP(port + 1);
-    }
-
-    public override void SendUDPMessage(byte[] data)
-    {
-        udp.SendUDPUpdate(data);
     }
 
     public override void SendTCPMessage(byte[] data)
@@ -152,7 +143,7 @@ internal class Server : Agent
         if (!client.active) return;
 
         SendQueue.Enqueue((clientID, data));
-        SendSignal.Release();
+        // SendSignal.Release();
         Interlocked.Increment(ref client.pendingMessages);
     }
 
@@ -186,10 +177,7 @@ internal class Server : Agent
     {
         GigNet.Log?.Invoke("Cleaning up");
         SendCancellationToken.Cancel();
-        tcp?.CleanUp();
-        udp?.CleanUp();
         ws?.CleanUp();
-        audioUdp?.CleanUp();
         serverBridge?.CleanUp();
     }
 
@@ -199,24 +187,20 @@ internal class Server : Agent
         {
             try
             {
-                await SendSignal.WaitAsync(ct);
-
+                // await SendSignal.WaitAsync(ct);
                 while (SendQueue.TryDequeue(out var data))
                 {
-                    await _sendConcurrency.WaitAsync(ct);
-                    _ = SendOneAsync(data).ContinueWith(_ =>
-                    {
-                        _sendConcurrency.Release();
-                    }, TaskContinuationOptions.ExecuteSynchronously);
+                    // await _sendConcurrency.WaitAsync(ct);
+                    _ = SendOneAsync(data);
+                    // .ContinueWith(_ =>
+                    // {
+                    //     _sendConcurrency.Release();
+                    // }, TaskContinuationOptions.ExecuteSynchronously);
                 }
             }
-            catch (OperationCanceledException)
+            catch (Exception)
             {
                 break;
-            }
-            catch
-            {
-
             }
         }
     }
@@ -689,257 +673,6 @@ internal class Server : Agent
         }
     }
 
-    class TCP
-    {
-        TcpListener tcpListener;
-        Thread thread;
-        volatile bool running = true;
-
-        public TCP(int port = 7778)
-        {
-            running = true;
-
-            tcpListener = new TcpListener(IPAddress.Any, port);
-            tcpListener.Server.NoDelay = true;
-            tcpListener.Start();
-
-            thread = new Thread(AdmitClients);
-            thread.Start();
-
-            Debug.Log($"TCP server started on port {port}");
-        }
-
-        async void AdmitClients()
-        {
-            while (running)
-            {
-                TcpClient client = await tcpListener.AcceptTcpClientAsync();
-
-                Debug.Log("Client connected.");
-
-                _ = Task.Run(() => HandleTCPClientAsync(client));
-            }
-        }
-
-        async Task HandleTCPClientAsync(TcpClient client)
-        {
-            client.NoDelay = true;
-            var stream = client.GetStream();
-            byte[] buffer = new byte[4];
-            long id = -1;
-
-            try
-            {
-                while (running)
-                {
-                    // int bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length);
-                    int bytesRead = await Readfully(stream, buffer, 0, buffer.Length);
-                    if (bytesRead == 0) { Debug.Log("Read zero bytes"); break; }
-
-                    int payloadLength = BitConverter.ToInt32(buffer);
-                    if (payloadLength > 0)
-                    {
-                        byte[] payload = new byte[payloadLength];
-                        // stream.Read(payload, 0, payloadLength);
-                        bytesRead = await Readfully(stream, payload, 0, payloadLength);
-                        if (bytesRead == 0) { Debug.Log("Read zero bytes"); break; }
-
-                        ServerInstance.HandlePayload(client, ref id, payload);
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.LogError($"Client error: {e.Message}");
-                if (e.InnerException != null)
-                {
-                    Debug.LogError($"Client error: {e.InnerException.Message}");
-                }
-            }
-            finally
-            {
-                client.Close();
-                Debug.Log("Client disconnected.");
-            }
-        }
-
-        async Task<int> Readfully(NetworkStream stream, byte[] buffer, int offset, int count)
-        {
-            int bytesRead = 0;
-            while (count > 0)
-            {
-                bytesRead = await stream.ReadAsync(buffer, offset, count);
-                if (bytesRead == 0)
-                    break;
-
-                offset += bytesRead;
-                count -= bytesRead;
-            }
-            return bytesRead;
-        }
-
-        public void CleanUp()
-        {
-            running = false;
-            thread.Join();
-            tcpListener.Stop();
-        }
-    }
-
-    class UDP
-    {
-        List<IPEndPoint> udpClients = new List<IPEndPoint>();
-        UdpClient server;
-        IPEndPoint remoteEP;
-        Thread thread;
-        bool running = true;
-
-        public UDP(int port = 7778)
-        {
-            running = true;
-
-            server = new UdpClient(port);
-            remoteEP = new IPEndPoint(IPAddress.Any, 0);
-
-            thread = new Thread(AdmitClients);
-            thread.Start();
-
-            Debug.Log($"UDP server started on port {port}");
-        }
-
-        async void AdmitClients()
-        {
-            while (running)
-            {
-                try
-                {
-                    UdpReceiveResult result = await server.ReceiveAsync();
-
-                    lock (udpClients)
-                    {
-                        if (!udpClients.Contains(result.RemoteEndPoint))
-                            udpClients.Add(result.RemoteEndPoint);
-                    }
-
-                    byte[] data = result.Buffer;
-                    int length = BitConverter.ToInt32(data);
-
-                    if (length > 0)
-                    {
-                        int packID = BitConverter.ToInt32(data, 4);
-                        switch ((PackType)packID)
-                        {
-                            case PackType.RPC:
-                                {
-                                    byte[] payload = new byte[length];
-                                    Buffer.BlockCopy(data, 4, payload, 0, length);
-                                    ServerInstance.rpcRouter.HandlePacket(payload);
-                                    break;
-                                }
-                            case PackType.Heartbeat:
-                                {
-                                    server.Send(data, data.Length, result.RemoteEndPoint);
-                                    break;
-                                }
-                            default:
-                                {
-                                    break;
-                                }
-                        }
-                    }
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError($"Receive error: {e.Message}");
-                }
-            }
-        }
-
-        public void SendUDPUpdate(byte[] data)
-        {
-            lock (udpClients)
-            {
-                foreach (var c in udpClients)
-                {
-                    server.Send(data, data.Length, c);
-                }
-            }
-        }
-
-        public void CleanUp()
-        {
-            running = false;
-            thread.Join();
-            try { server?.Close(); } catch { }
-        }
-    }
-
-    class AudUDP
-    {
-        List<IPEndPoint> udpClients = new List<IPEndPoint>();
-        UdpClient server;
-        IPEndPoint remoteEP;
-        Thread thread;
-        bool running = true;
-
-        public AudUDP(int port = 7778)
-        {
-            running = true;
-
-            server = new UdpClient(port);
-            remoteEP = new IPEndPoint(IPAddress.Any, 0);
-
-            thread = new Thread(AdmitClients);
-            thread.Start();
-
-            Debug.Log($"UDP server started on port {port}");
-        }
-
-        async void AdmitClients()
-        {
-            while (running)
-            {
-                try
-                {
-                    UdpReceiveResult result = await server.ReceiveAsync();
-
-                    lock (udpClients)
-                    {
-                        if (!udpClients.Contains(result.RemoteEndPoint))
-                            udpClients.Add(result.RemoteEndPoint);
-                    }
-
-                    byte[] data = result.Buffer;
-                    // SendAudio(data, result.RemoteEndPoint);
-                    SendAudio(data);
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError($"Receive error: {e.Message}");
-                }
-            }
-        }
-
-        void SendAudio(byte[] data, IPEndPoint exclude = null)
-        {
-            lock (udpClients)
-            {
-                foreach (var c in udpClients)
-                {
-                    if ((exclude != null && c == exclude) || c == null) continue;
-                    server.Send(data, data.Length, c);
-                }
-            }
-        }
-
-        public void CleanUp()
-        {
-            running = false;
-            thread.Join();
-            try { server?.Close(); } catch { }
-        }
-    }
-
     class APIServerBridge
     {
         private readonly HttpListener _listener;
@@ -947,10 +680,14 @@ internal class Server : Agent
         private CancellationTokenSource _cts;
 
         public delegate void RequestReceivedHandler(string path, string method, string body);
-        public event RequestReceivedHandler OnRequestReceived;
+        public event Action<string> OnRequestReceived;
 
         public bool IsRunning => _listener.IsListening;
         public int Port => _port;
+
+        // Route tables
+        static Dictionary<string, Func<HttpListenerContext, Task>> GetRoutes = new();
+        static Dictionary<string, Func<HttpListenerContext, Task>> PostRoutes = new();
 
         public APIServerBridge(int port)
         {
@@ -966,11 +703,28 @@ internal class Server : Agent
             {
                 CleanUp();
             };
+
+            Post("/createRoom", async ctx =>
+            {
+                try
+                {
+                    string body = await ReadBody(ctx);
+                    OnRequestReceived?.Invoke(body);
+                    await Json(ctx, "{\"ok\":true}");
+                }
+                catch (Exception ex)
+                {
+                    await Error(ctx, 500, ex.Message);
+                }
+            });
+
+            Post("/joinRoom", async ctx =>
+            {
+                string token = ctx.Request.QueryString["userId"];
+                string room = ctx.Request.QueryString["roomId"];
+            });
         }
 
-        /// <summary>
-        /// Starts the HTTP listener asynchronously on the specified port.
-        /// </summary>
         public void Start()
         {
             if (IsRunning) return;
@@ -980,8 +734,8 @@ internal class Server : Agent
             try
             {
                 _listener.Start();
-                Debug.Log($"✅ HTTP listener started on port {_port}");
                 _ = ListenLoopAsync(_cts.Token);
+                Debug.Log($"✅ HTTP listener started on port {_port}");
             }
             catch (Exception ex)
             {
@@ -989,9 +743,6 @@ internal class Server : Agent
             }
         }
 
-        /// <summary>
-        /// Non-blocking accept loop for handling requests.
-        /// </summary>
         private async Task ListenLoopAsync(CancellationToken token)
         {
             try
@@ -1012,9 +763,9 @@ internal class Server : Agent
             }
         }
 
-        private async Task HandleRequestAsync(HttpListenerContext context)
+        private async Task HandleRequestAsync(HttpListenerContext ctx)
         {
-            try
+            /*try
             {
                 if (context.Request.HttpMethod == "POST")
                 {
@@ -1050,17 +801,140 @@ internal class Server : Agent
                 {
                     context.Response.OutputStream.Write(buffer, 0, buffer.Length);
                 }
-                catch { /* ignore if stream already dead */ }
+                catch
+                { 
+                    //ignore if stream already dead
+                }
             }
             finally
             {
                 context.Response.OutputStream.Close();
+            }*/
+            if (ctx.Request.IsWebSocketRequest)
+            {
+                await HandleWebSocket(ctx);
+                return;
+            }
+
+            string path = ctx.Request.Url.AbsolutePath;
+            string method = ctx.Request.HttpMethod;
+
+            // GET
+            if (method == "GET" && GetRoutes.TryGetValue(path, out var getHandler))
+            {
+                await getHandler(ctx);
+                return;
+            }
+
+            // POST
+            if (method == "POST" && PostRoutes.TryGetValue(path, out var postHandler))
+            {
+                await postHandler(ctx);
+                return;
+            }
+
+            // NOT FOUND
+            ctx.Response.StatusCode = 404;
+            await Text(ctx, "Route not found");
+        }
+
+        static void Get(string path, Func<HttpListenerContext, Task> handler)
+        {
+            GetRoutes[path] = handler;
+        }
+
+        static void Post(string path, Func<HttpListenerContext, Task> handler)
+        {
+            PostRoutes[path] = handler;
+        }
+
+        static async Task<string> ReadBody(HttpListenerContext ctx)
+        {
+            using StreamReader reader = new StreamReader(ctx.Request.InputStream);
+            return await reader.ReadToEndAsync();
+        }
+
+        static async Task Text(HttpListenerContext ctx, string text)
+        {
+            byte[] data = Encoding.UTF8.GetBytes(text);
+
+            ctx.Response.ContentType = "text/plain";
+            ctx.Response.ContentLength64 = data.Length;
+
+            await ctx.Response.OutputStream.WriteAsync(data);
+            ctx.Response.Close();
+        }
+
+        static async Task Json(HttpListenerContext ctx, string json)
+        {
+            byte[] data = Encoding.UTF8.GetBytes(json);
+
+            ctx.Response.ContentType = "application/json";
+            ctx.Response.ContentLength64 = data.Length;
+
+            await ctx.Response.OutputStream.WriteAsync(data);
+            ctx.Response.Close();
+        }
+
+        static async Task Error(HttpListenerContext ctx, int statusCode, string message)
+        {
+            string json =
+                $"{{ \"error\": \"{message}\", \"status\": {statusCode} }}";
+
+            byte[] data = Encoding.UTF8.GetBytes(json);
+
+            ctx.Response.StatusCode = statusCode;
+            ctx.Response.ContentType = "application/json";
+            ctx.Response.ContentLength64 = data.Length;
+
+            await ctx.Response.OutputStream.WriteAsync(data);
+
+            ctx.Response.Close();
+        }
+
+        static async Task HandleWebSocket(HttpListenerContext context)
+        {
+            WebSocketContext wsContext = await context.AcceptWebSocketAsync(null);
+            WebSocket socket = wsContext.WebSocket;
+
+            Console.WriteLine("WebSocket connected");
+
+            byte[] buffer = new byte[1024];
+
+            while (socket.State == WebSocketState.Open)
+            {
+                WebSocketReceiveResult result = await socket.ReceiveAsync(
+                    new ArraySegment<byte>(buffer),
+                    CancellationToken.None
+                );
+
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    await socket.CloseAsync(
+                        WebSocketCloseStatus.NormalClosure,
+                        "Closing",
+                        CancellationToken.None
+                    );
+                }
+                else
+                {
+                    string message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+
+                    Console.WriteLine($"WS: {message}");
+
+                    string reply = $"Echo: {message}";
+                    byte[] replyBytes = Encoding.UTF8.GetBytes(reply);
+
+                    await socket.SendAsync(
+                        new ArraySegment<byte>(replyBytes),
+                        WebSocketMessageType.Text,
+                        true,
+                        CancellationToken.None
+                    );
+                }
             }
         }
 
-        /// <summary>
-        /// Gracefully stops the listener and releases resources.
-        /// </summary>
         public void CleanUp()
         {
             try
