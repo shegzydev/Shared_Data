@@ -2,45 +2,30 @@
 
 using System;
 using System.IO;
-using System.Net;
-using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
-//using NativeWebSocket;
 using System.Collections.Concurrent;
 using System.Linq;
-using SimpleJSON;
+using System.Net.Http;
 
 internal class Client : Agent
 {
     enum Connection
     {
-        TCP, WS
+        SSE, WS
     }
     Connection connection;
 
-    // UDP
-    private UdpClient udp;
-    private IPEndPoint serverEP;
-    private Thread udpReceiveThread;
-
-    //Audio
-    private Thread audReceiveThread;
-    private IPEndPoint audServerEP;
-    private UdpClient aud;
-
-    // TCP
-    private TcpClient tcpClient;
-    private NetworkStream tcpStream;
-    private Thread tcpReceiveThread;
-
     //WS
-    private SimpleWebSocket wsClient;
+    private WebSocketDemo.WebSocketClient wsClient;
+    private HttpClient client;
+    private HttpClient sendClient;
 
     static RPCRouter rpcRouter;
     string serverIP;
     int port;
 
+    Thread socketThread;
     private volatile bool running = true;
 
     public static Action OnConnected;
@@ -65,113 +50,72 @@ internal class Client : Agent
 
     }
 
-    public Client(RPCRouter rPCRouter, string _serverIP, int _port, bool enableAudio, long roomToConnect = -1)
+    string sseLink;
+
+    public Client(RPCRouter rPCRouter, string _serverIP, int _port, long userId, long roomId)
     {
-        session = -1;
+        GigNet.Status = "Connecting to server...";
+
+        sendClient = new HttpClient
+        {
+            Timeout = Timeout.InfiniteTimeSpan
+        };
 
         rpcRouter = rPCRouter;
         serverIP = _serverIP;
         port = _port;
 
-        // StartClientUDPConnection();
-#if UNITY_WEBGL || UNITY_ANDROID || UNITY_IOS
-        StartClientWSConnection(serverIP);
-#else
-        StartClientTCPConnection();
-        if (enableAudio) StartClientAudioConnection();
-#endif
-    }
-
-    void StartClientUDPConnection()
-    {
-        try
+        if (!string.IsNullOrEmpty(serverIP))
         {
-            udp = new UdpClient(0); // Local port for UDP
-            serverEP = new IPEndPoint(IPAddress.Parse(serverIP), port);
+            Uri uri = new Uri(serverIP);
+            string host = uri.Host;
 
-            udpReceiveThread = new Thread(UDPReceiveLoop) { IsBackground = true };
-            udpReceiveThread.Start();
+            if (string.IsNullOrEmpty(host))
+            {
+                host = "127.0.0.1";
+            }
 
-            SendUDPMessage(BitConverter.GetBytes(-1));
-
-            GigNet.Log?.Invoke($"UDP Receiver started on {serverIP}:{port}");
+            serverIP = host;
         }
-        catch (Exception ex)
-        {
-            GigNet.LogError?.Invoke($"UDP connection failed: {ex.Message}");
-        }
-    }
 
-    async void StartClientTCPConnection()
-    {
-        try
-        {
-            tcpClient = new TcpClient();
-            tcpClient.NoDelay = true;
-            await tcpClient.ConnectAsync(serverIP, port); // Connect to TCP server
-            tcpStream = tcpClient.GetStream();
+        // sseLink = $"http://127.0.0.1:{port}/msg?userId={userId}&roomId={roomId}";
+        sseLink = $"https://{serverIP}/{NetworkManager.Instance.gameName}_server/msg?userId={userId}&roomId={roomId}";
 
-            tcpReceiveThread = new Thread(TCPReceiveLoop);
-            tcpReceiveThread.IsBackground = true;
-            tcpReceiveThread.Start();
+        socketThread = new Thread(() => StartClientWSConnection(serverIP, port, userId, roomId));
+        socketThread.Start();
 
-            OnConnected?.Invoke();
-
-            connection = Connection.TCP;
-            GigNet.Log?.Invoke($"TCP Connected to {serverIP}:{port}");
-        }
-        catch (Exception ex)
-        {
-            GigNet.LogError?.Invoke($"TCP connection failed: {ex.Message}");
-            //AttemptTCPReconnect();
-        }
+        // _ = StartSSEConnection(serverIP, port, userId, roomId);
     }
 
     bool connecting;
-    async void StartClientWSConnection(string url)
+    void StartClientWSConnection(string host, int port, long userId, long roomId)
     {
         try
         {
             if (connecting) return;
             connecting = true;
 
-            if (!string.IsNullOrEmpty(url))
-            {
-                Uri uri = new Uri(url);
-                string host = uri.Host;
-
-                GigNet.Log?.Invoke("Host: " + host);
-
-                if (string.IsNullOrEmpty(host))
-                {
-                    host = "127.0.0.1";
-                }
-
-                serverIP = host;
-            }
-            GigNet.Log?.Invoke($"using host {serverIP}");
-
-            // #if UNITY_EDITOR
-            //             wsClient = new SimpleWebSocket($"ws://{serverIP}:{port + 6}");
-            // #else
 #if DEBUG_MODE
-            wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port + 6}");
+            wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port}");
 #elif RELEASE
-            GigNet.Log?.Invoke("Connecting to " + $"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
-            wsClient = new SimpleWebSocket($"wss://{serverIP}/{NetworkManager.Instance.gameName}_server/");
-            // wsClient = new SimpleWebSocket($"ws://127.0.0.1:{port + 6}");
+            GigNet.Log?.Invoke("Connecting to " + $"wss://{host}/{NetworkManager.Instance.gameName}_server/ws" + $" at port {port}");
+            var link = $"wss://{host}/{NetworkManager.Instance.gameName}_server/ws?userId={userId}&roomId={roomId}";
+            // link = $"ws://127.0.0.1:{port}/ws?userId={userId}&roomId={roomId}";
+            wsClient = new WebSocketDemo.WebSocketClient(link);
 #endif
-            // #endif
-            wsClient.OnOpen += () =>
+
+            wsClient.OnConnected += async () =>
             {
                 OnConnected?.Invoke();
                 connection = Connection.WS;
                 GigNet.Log?.Invoke("✅ Connected to server!");
                 connecting = false;
+                GigNet.Status = "Connected to server!";
             };
 
-            wsClient.OnMessage += (buffer) =>
+            wsClient.OnDataReceived += async (buffer) =>
             {
+                if (buffer.Length < 4) return; // invalid packet, ignore
                 int payloadLength = BitConverter.ToInt32(buffer);
                 if (payloadLength > 0)
                 {
@@ -181,35 +125,30 @@ internal class Client : Agent
                 }
             };
 
-            wsClient.OnError += (err) =>
+            wsClient.OnError += async (err) =>
             {
                 connecting = false;
                 GigNet.LogError?.Invoke($"❌ Error: {err}");
                 try
                 {
-                    wsClient?.CloseAsync(1006, "abnormal");
+                    wsClient?.DisconnectAsync(System.Net.WebSockets.WebSocketCloseStatus.InternalServerError, "abnormal");
                 }
                 catch { }
             };
 
-            wsClient.OnLog += (log) =>
-            {
-                // GigNet.Log?.Invoke($"WS Log: {log}");
-            };
-
-            wsClient.OnClose += (code, message) =>
+            wsClient.OnDisconnected += async (code, message) =>
             {
                 GigNet.Log?.Invoke($"🔌 Disconnected.{message}");
                 wsClient = null;
 
-                if (code != 1000)
+                if (code != System.Net.WebSockets.WebSocketCloseStatus.NormalClosure)
                 {
                     GigNet.Log?.Invoke("Reconnecting...");
-                    StartClientWSConnection(url);
+                    StartClientWSConnection(host, port, userId, roomId);
                 }
             };
 
-            await wsClient.ConnectAsync();
+            _ = wsClient.ConnectAsync();
         }
         catch (Exception ex)
         {
@@ -217,226 +156,116 @@ internal class Client : Agent
         }
     }
 
-    void StartClientAudioConnection()
+    async Task StartSSEConnection(string host, int port, long userId, long roomId)
     {
-        aud = new UdpClient(0); // Local port for UDP
-        audServerEP = new IPEndPoint(IPAddress.Parse(serverIP), port + 1);
+        int retryDelay = 3000;
+        int maxRetries = 25;
+        int attempts = 0;
+        running = true;
 
-        audReceiveThread = new Thread(AudioReceiveLoop) { IsBackground = true };
-        audReceiveThread.Start();
-#if !UNITY_WEBGL
-        GigNetVoice.Instance.OnEncoded += SendAudio;
-#endif
-        GigNet.Log?.Invoke($"UDP Receiver started on {serverIP}:{port + 1}");
+        while (attempts < maxRetries && running)
+        {
+            try
+            {
+                // var link = $"http://127.0.0.1:{port}/join?userId={userId}&roomId={roomId}";
+                var link = $"https://{host}/{NetworkManager.Instance.gameName}_server/join?userId={userId}&roomId={roomId}";
+
+                GigNet.Status = "Connecting to server...";
+
+                client = new HttpClient
+                {
+                    Timeout = Timeout.InfiniteTimeSpan
+                };
+
+                var request = new HttpRequestMessage(HttpMethod.Get, link);
+
+                HttpResponseMessage response = await client.SendAsync(
+                    request,
+                    HttpCompletionOption.ResponseHeadersRead
+                );
+
+                GigNet.Log("sent request");
+
+                Stream stream = await response.Content.ReadAsStreamAsync();
+                using StreamReader reader = new StreamReader(stream);
+
+                GigNet.Log("gottenstream");
+                OnConnected?.Invoke();
+                connection = Connection.SSE;
+                GigNet.Status = "Connected to server!";
+
+                while (running)
+                {
+                    string line = await reader.ReadLineAsync();
+                    if (line == null) break;
+
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+
+                    var buffer = Convert.FromBase64String(line);
+                    int payloadLength = BitConverter.ToInt32(buffer);
+                    if (payloadLength > 0)
+                    {
+                        byte[] payload = new byte[payloadLength];
+                        Buffer.BlockCopy(buffer, 4, payload, 0, payloadLength);
+                        HandlePayload(payload);
+                    }
+                }
+
+                GigNet.Log("rolled");
+            }
+            catch (Exception e)
+            {
+                GigNet.LogError(e.Message + ":" + e.StackTrace);
+
+                if (e.Message.Contains("chunk") || e.Message.Contains("Expecting"))
+                {
+                    // transient Mono chunked parsing glitch, retry immediately
+                    GigNet.Log("Chunk parse glitch, retrying...");
+                    continue; // don't increment attempts, don't delay
+                }
+            }
+
+            attempts++;
+            await Task.Delay(retryDelay);
+            GigNet.Status = $"Connection lost. Retrying... ({attempts}/{maxRetries})";
+        }
     }
 
     //==================UDP======================//
     public override void SendUDPMessage(byte[] data)
     {
         OutGoingData += data.Length;
-        udp.Send(data, data.Length, serverEP);
+        // udp.Send(data, data.Length, serverEP);
     }
 
-    private void UDPReceiveLoop()
+    public override async void SendTCPMessage(byte[] data)
     {
-        IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-        while (running)
-        {
-            try
-            {
-                byte[] data = udp.Receive(ref remoteEP);
-                int length = BitConverter.ToInt32(data);
-
-                IncomingData += data.Length;
-
-                if (length > 0)
-                {
-                    int packID = BitConverter.ToInt32(data, 4);
-                    switch ((PackType)packID)
-                    {
-                        case PackType.RPC:
-                            {
-                                byte[] payload = new byte[length];
-                                Buffer.BlockCopy(data, 4, payload, 0, length);
-                                NetworkManager.Instance.QueueEvent(ActionType.RPC, payload);
-                                break;
-                            }
-                        case PackType.Heartbeat:
-                            {
-                                var sendTime = BitConverter.ToInt64(data, 8);
-                                var ReceiveTime = DateTimeOffset.UtcNow.Ticks;
-                                NetworkManager.ms = (int)((ReceiveTime - sendTime) / TimeSpan.TicksPerMillisecond);
-                                receivedHeartbeat = NetworkManager.Time.time;
-                                break;
-                            }
-                        case PackType.Audio:
-                            {
-
-                                break;
-                            }
-                        default:
-                            {
-                                break;
-                            }
-                    }
-                }
-            }
-            catch (Exception e)
-            {
-                GigNet.LogError?.Invoke($"UDP receive error: {e.Message}");
-                //break;
-            }
-        }
-    }
-
-    //==================AUD======================//
-    private void SendAudio(byte[] data)
-    {
-        var payload = Util.MergeArrays(BitConverter.GetBytes(NetworkManager.Instance.ID), data);
-        OutGoingData += payload.Length;
-        aud.Send(payload, payload.Length, audServerEP);
-    }
-
-    private void AudioReceiveLoop()
-    {
-        IPEndPoint remoteEP = new IPEndPoint(IPAddress.Any, 0);
-        while (running)
-        {
-            try
-            {
-                byte[] data = aud.Receive(ref remoteEP);
-
-                IncomingData += data.Length;
-
-                int sender = BitConverter.ToInt32(data, 0);
-                var audiopacket = new byte[data.Length - 4];
-
-                Buffer.BlockCopy(data, 4, audiopacket, 0, audiopacket.Length);
-#if !UNITY_WEBGL
-                if (sender > -1) GigNetVoice.Instance.OnReceiveEncoded(audiopacket, sender);
-#endif
-            }
-            catch (Exception e)
-            {
-                GigNet.LogError?.Invoke($"UDP receive error: {e.Message} : {e.InnerException}");
-            }
-        }
-    }
-
-    public override void SendTCPMessage(byte[] data)
-    {
-        if (connection == Connection.WS)
-        {
-            if (wsClient != null && wsClient.State == System.Net.WebSockets.WebSocketState.Open)
-            {
-                try
-                {
-                    _ = wsClient.SendAsync(data);
-                    OutGoingData += data.Length;
-                }
-                catch (Exception ex)
-                {
-                    GigNet.LogError?.Invoke($"WS Send Error:{ex};{ex.Message}");
-                    try
-                    {
-                        wsClient?.CloseAsync();
-                        wsClient = null;
-                    }
-                    catch { }
-                }
-            }
-        }
-        else
-        {
-            if (tcpStream != null && tcpStream.CanWrite)
-            {
-                try
-                {
-                    tcpStream.Write(data);
-                    OutGoingData += data.Length;
-                }
-                catch (IOException ex)
-                {
-                    GigNet.LogError?.Invoke($"TCP send error:{ex};{ex.Message}");
-                    AttemptTCPReconnect();
-                }
-            }
-        }
-    }
-
-    //=================TCP======================//
-    private void TCPReceiveLoop()
-    {
-        GigNet.Log?.Invoke("Receiving TCP Data");
-
-        byte[] buffer = new byte[4];
-        while (running)
-        {
-            try
-            {
-                // int bytesRead = tcpStream.Read(buffer, 0, buffer.Length);
-                int bytesRead = Readfully(tcpStream, buffer, 0, buffer.Length);
-                if (bytesRead == 0) break; // Disconnected
-                int payloadLength = BitConverter.ToInt32(buffer);
-
-                if (payloadLength > 0)
-                {
-                    byte[] payload = new byte[payloadLength];
-                    bytesRead = Readfully(tcpStream, payload, 0, payloadLength);
-                    if (bytesRead == 0) break;
-                    // tcpStream.Read(payload, 0, payloadLength);
-                    HandlePayload(payload);
-                }
-            }
-            catch (Exception e)
-            {
-                GigNet.LogError?.Invoke($"TCP receive error: {e.Message}");
-                if (e.InnerException != null)
-                {
-                    GigNet.LogError?.Invoke($"Inner: {e.InnerException.Message}");
-                }
-                break;
-            }
-        }
-    }
-
-    int Readfully(NetworkStream stream, byte[] buffer, int offset, int count)
-    {
-        int bytesRead = 0;
-        while (count > 0)
-        {
-            bytesRead = stream.Read(buffer, offset, count);
-            if (bytesRead == 0)
-                break;
-
-            offset += bytesRead;
-            count -= bytesRead;
-        }
-        return bytesRead;
-    }
-
-    private async void AttemptTCPReconnect()
-    {
-        try { tcpStream?.Close(); } catch { }
-        try { tcpClient?.Close(); } catch { }
         try
         {
-            GigNet.Log?.Invoke("Attempting TCP reconnect...");
-            tcpClient = new TcpClient();
-            await tcpClient.ConnectAsync(serverIP, port);
-            tcpStream = tcpClient.GetStream();
-
-            GigNet.Log?.Invoke("TCP reconnected!");
-            tcpReceiveThread = new Thread(TCPReceiveLoop) { IsBackground = true };
-            tcpReceiveThread.Start();
-
-            OnConnected?.Invoke();
+            await wsClient.SendAsync(data);
+            OutGoingData += data.Length;
         }
         catch
         {
-            GigNet.LogWarning?.Invoke("TCP reconnect failed. Retrying in 3 seconds...");
-            await Task.Delay(3000);
-            AttemptTCPReconnect();
+            try
+            {
+                wsClient?.DisconnectAsync();
+                wsClient = null;
+            }
+            catch { }
+
+            if (!running) return;
+
+            try
+            {
+                var content = new ByteArrayContent(data);
+                var response = await sendClient.PostAsync(sseLink, content);
+                OutGoingData += data.Length;
+            }
+            catch
+            {
+
+            }
         }
     }
 
@@ -447,38 +276,11 @@ internal class Client : Agent
         int packID = BitConverter.ToInt32(payload);
         switch ((PackType)packID)
         {
-            case PackType.RPC:
-                {
-                    NetworkManager.Instance.QueueEvent(ActionType.RPC, payload);
-                    break;
-                }
             case PackType.NetEvent:
                 {
                     byte[] eventArgs = new byte[payload.Length - 4];
                     Buffer.BlockCopy(payload, 4, eventArgs, 0, eventArgs.Length);
                     NetworkManager.Instance.QueueEvent(ActionType.NetEvent, eventArgs);
-                    break;
-                }
-            case PackType.IDAssignment:
-                {
-                    long id = BitConverter.ToInt64(payload, 4);
-                    session = BitConverter.ToInt64(payload, 12);
-                    actionQueue.Enqueue(() =>
-                    {
-                        GigNet.Log?.Invoke($"Received session {session} from server");
-                        OnReceivedID?.Invoke(id);
-                    });
-                    break;
-                }
-            case PackType.Instantiation:
-                {
-                    NetworkManager.Instance.QueueEvent(ActionType.Spawn, payload);
-                    break;
-                }
-            case PackType.Destroy:
-                {
-                    int ownerIdToDestroy = BitConverter.ToInt32(payload, 4);
-                    NetworkManager.Instance.QueueEvent(ActionType.Despawn, ownerIdToDestroy);
                     break;
                 }
             case PackType.RoomAssign:
@@ -502,6 +304,10 @@ internal class Client : Agent
                     receivedHeartbeat = NetworkManager.Time.time;
                     break;
                 }
+            case PackType.Rejected:
+                {
+                    break;
+                }
             default:
                 {
                     break;
@@ -513,22 +319,13 @@ internal class Client : Agent
     public override void CleanUp()
     {
         running = false;
-
-        try { udp?.Close(); } catch { }
-        try { tcpStream?.Close(); } catch { }
-        try { tcpClient?.Close(); } catch { }
         try
         {
-            wsClient?.CloseAsync();
+            wsClient?.DisconnectAsync();
             wsClient = null;
+            socketThread?.Join();
         }
-        catch
-        {
-
-        }
-
-        tcpReceiveThread?.Join();
-        udpReceiveThread?.Join();
+        catch { }
     }
 }
 #endif

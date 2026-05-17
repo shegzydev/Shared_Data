@@ -1,212 +1,294 @@
 using System;
-using System.Text;
+using System.Buffers;
+using System.Collections.Generic;
+using System.Net.WebSockets;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Diagnostics;
-
-
-#if UNITY_WEBGL || NETSTANDARD || WASM
-using System.Net.WebSockets;
-#else
-using WebSocketSharp;
-#endif
-
-public class SimpleWebSocket
+ 
+namespace WebSocketDemo
 {
-    public event Action OnOpen;
-    public event Action<byte[]> OnMessage;
-    public event Action<string> OnError;
-    public event Action<string> OnLog;
-    public event Action<ushort, string> OnClose;
-
-    private string _url;
-    private CancellationTokenSource _cts;
-
-#if UNITY_WEBGL || NETSTANDARD || WASM
-    private ClientWebSocket _client;
-#else
-    private WebSocket _client;
-#endif
-
-    public SimpleWebSocket(string url)
+    /// <summary>
+    /// A binary-only client-side WebSocket wrapper.
+    /// All sends and receives operate exclusively on raw byte arrays.
+    /// </summary>
+    public class WebSocketClient : IAsyncDisposable
     {
-        _url = url;
-    }
-
-    public async Task ConnectAsync()
-    {
-        _cts = new CancellationTokenSource();
-
-#if UNITY_WEBGL || NETSTANDARD || WASM
-        _client = new ClientWebSocket();
-        try
+        private ClientWebSocket _socket;
+        private CancellationTokenSource _cts;
+        private readonly Uri _serverUri;
+        private readonly int _receiveBufferSize;
+ 
+        // --- Events ---
+        public event Func<byte[], Task>? OnDataReceived;
+        public event Func<Task>? OnConnected;
+        public event Func<WebSocketCloseStatus?, string?, Task>? OnDisconnected;
+        public event Func<Exception, Task>? OnError;
+ 
+        public WebSocketState State => _socket?.State ?? WebSocketState.None;
+ 
+        public WebSocketClient(string serverUrl, int receiveBufferSize = 4096)
         {
-            await _client.ConnectAsync(new Uri(_url), _cts.Token);
-            OnOpen?.Invoke();
-            // _ = ReceiveLoop();
-            _ = Task.Run(ReceiveLoop);
+            _serverUri = new Uri(serverUrl);
+            _receiveBufferSize = receiveBufferSize;
+            _socket = new ClientWebSocket();
+            _cts = new CancellationTokenSource();
         }
-        catch (Exception ex)
+ 
+        // -------------------------------------------------------------------------
+        // Connect
+        // -------------------------------------------------------------------------
+ 
+        /// <summary>
+        /// Connects to the WebSocket server and starts the binary receive loop.
+        /// </summary>
+        public async Task ConnectAsync(CancellationToken externalToken = default)
         {
-            OnError?.Invoke(ex.Message);
-        }
-#else
-        _client = new WebSocket(_url);
-
-        _client.OnOpen += (_, __) => OnOpen?.Invoke();
-        _client.OnMessage += (_, e) => OnMessage?.Invoke(e.RawData);
-        _client.OnError += (_, e) => OnError?.Invoke(e.Message);
-        _client.OnClose += (_, e) =>
-        {
-            OnClose?.Invoke((ushort)e.Code, e.Reason ?? "No reason");
-        };
-
-        try
-        {
-            _client.ConnectAsync();
-        }
-        catch (Exception ex)
-        {
-            OnError?.Invoke(ex.Message);
-        }
-#endif
-    }
-
-#if UNITY_WEBGL || NETSTANDARD || WASM
-    byte[] buffer = null;
-
-    private async Task ReceiveLoop()
-    {
-        if (buffer == null) buffer = new byte[8192];
-
-        try
-        {
-            Stopwatch stopwatch = Stopwatch.StartNew();
-
-            while (_client.State == WebSocketState.Open)
+            if (_socket.State != WebSocketState.None &&
+                _socket.State != WebSocketState.Closed)
             {
-                WebSocketReceiveResult result;
-                int offset = 0;
-
-                do
-                {
-                    result = await _client.ReceiveAsync(
-                        new ArraySegment<byte>(buffer, offset, buffer.Length - offset),
-                        _cts.Token
-                    );
-
-                    if (result.MessageType == WebSocketMessageType.Close)
-                    {
-                        var code = (ushort)(result.CloseStatus ?? WebSocketCloseStatus.Empty);
-                        var reason = result.CloseStatusDescription ?? "Closed";
-                        OnClose?.Invoke(code, reason);
-                        await _client.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed", CancellationToken.None);
-                        return;
-                    }
-
-                    offset += result.Count;
-
-                    // Safety: resize if message is larger than buffer
-                    if (offset >= buffer.Length)
-                    {
-                        Array.Resize(ref buffer, buffer.Length * 2);
-                        OnLog?.Invoke("Message exceeded buffer size, resizing buffer to " + buffer.Length + " bytes");
-                    }
-
-                } while (!result.EndOfMessage);
-
-                // COPY ONLY AFTER FULL MESSAGE
-                var data = new byte[offset];
-                Buffer.BlockCopy(buffer, 0, data, 0, offset);
-
-                // IMPORTANT: do NOT block here
-                OnMessage?.Invoke(data);
-
-                OnLog?.Invoke($"Received message of {data.Length} bytes in {stopwatch.ElapsedMilliseconds} ms");
-                stopwatch.Restart();
+                throw new InvalidOperationException(
+                    $"Cannot connect while socket is in '{_socket.State}' state.");
+            }
+ 
+            _socket = new ClientWebSocket();
+            _cts = CancellationTokenSource.CreateLinkedTokenSource(externalToken);
+ 
+            try
+            {
+                await _socket.ConnectAsync(_serverUri, _cts.Token);
+                await RaiseEventAsync(OnConnected);
+ 
+                // Fire-and-forget the receive loop
+                _ = Task.Run(() => ReceiveLoopAsync(_cts.Token), _cts.Token);
+            }
+            catch (Exception ex)
+            {
+                await RaiseEventAsync(OnError, ex);
+                throw;
             }
         }
-        catch (OperationCanceledException)
+ 
+        // -------------------------------------------------------------------------
+        // Send
+        // -------------------------------------------------------------------------
+ 
+        /// <summary>
+        /// Sends raw binary data to the server.
+        /// </summary>
+        public async Task SendAsync(byte[] data, CancellationToken cancellationToken = default)
         {
-            // normal on close
+            EnsureConnected();
+ 
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _cts.Token);
+ 
+            await _socket.SendAsync(
+                new ArraySegment<byte>(data),
+                WebSocketMessageType.Binary,
+                endOfMessage: true,
+                cancellationToken: linkedCts.Token);
         }
-        catch (Exception ex)
+ 
+        /// <summary>
+        /// Sends a slice of a buffer as binary data, avoiding an extra allocation.
+        /// </summary>
+        public async Task SendAsync(byte[] data, int offset, int count,
+            CancellationToken cancellationToken = default)
         {
-            OnError?.Invoke(ex.Message);
+            EnsureConnected();
+ 
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _cts.Token);
+ 
+            await _socket.SendAsync(
+                new ArraySegment<byte>(data, offset, count),
+                WebSocketMessageType.Binary,
+                endOfMessage: true,
+                cancellationToken: linkedCts.Token);
         }
-    }
-
-    /*
-    private async Task ReceiveLoop()
-    {
-        if (buffer == null) buffer = new byte[4096];
-        try
+ 
+        /// <summary>
+        /// Sends a ReadOnlyMemory buffer as binary data (.NET 5+).
+        /// </summary>
+        public async Task SendAsync(ReadOnlyMemory<byte> data,
+            CancellationToken cancellationToken = default)
         {
-            while (_client.State == WebSocketState.Open)
+            EnsureConnected();
+ 
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken, _cts.Token);
+ 
+            await _socket.SendAsync(
+                data,
+                WebSocketMessageType.Binary,
+                endOfMessage: true,
+                cancellationToken: linkedCts.Token);
+        }
+ 
+        // -------------------------------------------------------------------------
+        // Receive Loop
+        // -------------------------------------------------------------------------
+ 
+        private async Task ReceiveLoopAsync(CancellationToken cancellationToken)
+        {
+            // Rent a reusable buffer from the pool for each frame read
+            var frameBuffer = ArrayPool<byte>.Shared.Rent(_receiveBufferSize);
+ 
+            try
             {
-                var result = await _client.ReceiveAsync(buffer, _cts.Token);
-
-                if (result.MessageType == WebSocketMessageType.Close)
+                while (_socket.State == WebSocketState.Open &&
+                       !cancellationToken.IsCancellationRequested)
                 {
-                    var code = (ushort)(result.CloseStatus ?? WebSocketCloseStatus.Empty);
-                    var reason = result.CloseStatusDescription ?? "Closed";
-                    OnClose?.Invoke(code, reason);
-                    await _client.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closed", CancellationToken.None);
-                }
-                else
-                {
-                    byte[] data = new byte[result.Count];
-                    Array.Copy(buffer, data, result.Count);
-                    OnMessage?.Invoke(data);
+                    // Accumulate frames into a list of segments until EndOfMessage
+                    var segments = new List<byte[]>();
+                    int totalBytes = 0;
+ 
+                    WebSocketReceiveResult result;
+ 
+                    do
+                    {
+                        var segment = new ArraySegment<byte>(frameBuffer);
+                        result = await _socket.ReceiveAsync(segment, cancellationToken);
+ 
+                        if (result.MessageType == WebSocketMessageType.Close)
+                        {
+                            await _socket.CloseAsync(
+                                WebSocketCloseStatus.NormalClosure,
+                                "Acknowledged server close",
+                                CancellationToken.None);
+ 
+                            await RaiseEventAsync(OnDisconnected,
+                                result.CloseStatus, result.CloseStatusDescription);
+                            return;
+                        }
+ 
+                        if (result.MessageType != WebSocketMessageType.Binary)
+                        {
+                            // Reject non-binary frames
+                            await _socket.CloseAsync(
+                                WebSocketCloseStatus.InvalidMessageType,
+                                "Only binary messages are accepted",
+                                CancellationToken.None);
+ 
+                            await RaiseEventAsync(OnDisconnected,
+                                WebSocketCloseStatus.InvalidMessageType,
+                                "Non-binary frame received");
+                            return;
+                        }
+ 
+                        // Copy this frame's bytes into a dedicated array
+                        var chunk = new byte[result.Count];
+                        Buffer.BlockCopy(frameBuffer, 0, chunk, 0, result.Count);
+                        segments.Add(chunk);
+                        totalBytes += result.Count;
+ 
+                    } while (!result.EndOfMessage);
+ 
+                    // Assemble all chunks into one contiguous byte array
+                    var message = AssembleMessage(segments, totalBytes);
+                    await RaiseEventAsync(OnDataReceived, message);
                 }
             }
+            catch (OperationCanceledException)
+            {
+                // Normal shutdown — swallow
+            }
+            catch (WebSocketException ex) when (
+                ex.WebSocketErrorCode == WebSocketError.ConnectionClosedPrematurely ||
+                _socket.State == WebSocketState.Aborted)
+            {
+                await RaiseEventAsync(OnDisconnected,
+                    WebSocketCloseStatus.EndpointUnavailable, ex.Message);
+            }
+            catch (Exception ex)
+            {
+                await RaiseEventAsync(OnError, ex);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(frameBuffer);
+            }
         }
-        catch (Exception ex)
+ 
+        /// <summary>
+        /// Flattens a list of byte-array chunks into a single contiguous array.
+        /// For single-chunk messages (the common case) no copy is needed.
+        /// </summary>
+        private static byte[] AssembleMessage(List<byte[]> segments, int totalBytes)
         {
-            OnError?.Invoke(ex.Message);
+            if (segments.Count == 1)
+                return segments[0];
+ 
+            var assembled = new byte[totalBytes];
+            int offset = 0;
+            foreach (var chunk in segments)
+            {
+                Buffer.BlockCopy(chunk, 0, assembled, offset, chunk.Length);
+                offset += chunk.Length;
+            }
+            return assembled;
         }
-    }*/
-#endif
-
-    public async Task SendAsync(byte[] data)
-    {
-#if UNITY_WEBGL || NETSTANDARD || WASM
-        if (_client?.State == WebSocketState.Open)
-            await _client.SendAsync(data, WebSocketMessageType.Binary, true, _cts.Token);
-#else
-        if (_client?.ReadyState == WebSocketState.Open)
-            _client.Send(data);
-#endif
-    }
-
-    public async Task CloseAsync(ushort code = 1000, string reason = "Normal Closure")
-    {
-        try
+ 
+        // -------------------------------------------------------------------------
+        // Disconnect
+        // -------------------------------------------------------------------------
+ 
+        /// <summary>
+        /// Gracefully closes the WebSocket connection.
+        /// </summary>
+        public async Task DisconnectAsync(
+            WebSocketCloseStatus closeStatus = WebSocketCloseStatus.NormalClosure,
+            string statusDescription = "Client disconnecting",
+            CancellationToken cancellationToken = default)
         {
-#if UNITY_WEBGL || NETSTANDARD || WASM
-            if (_client?.State == WebSocketState.Open)
-                await _client.CloseAsync((WebSocketCloseStatus)code, reason, CancellationToken.None);
-#else
-            if (_client?.ReadyState == WebSocketState.Open)
-                _client.Close((WebSocketSharp.CloseStatusCode)code, reason);
-#endif
-            OnClose?.Invoke(code, reason);
+            if (_socket.State != WebSocketState.Open)
+                return;
+ 
+            _cts.Cancel();
+ 
+            try
+            {
+                await _socket.CloseAsync(closeStatus, statusDescription, cancellationToken);
+            }
+            catch (WebSocketException)
+            {
+                // Socket may already be gone — safe to ignore
+            }
+ 
+            await RaiseEventAsync(OnDisconnected, closeStatus, statusDescription);
         }
-        catch (Exception ex)
+ 
+        // -------------------------------------------------------------------------
+        // Helpers
+        // -------------------------------------------------------------------------
+ 
+        private void EnsureConnected()
         {
-            OnError?.Invoke(ex.Message);
+            if (_socket.State != WebSocketState.Open)
+                throw new InvalidOperationException(
+                    $"WebSocket is not open. Current state: {_socket.State}");
         }
-    }
-
-    public WebSocketState State
-    {
-        get
+ 
+        private static async Task RaiseEventAsync(Func<Task>? handler)
         {
-#if UNITY_WEBGL || NETSTANDARD || WASM
-            return _client?.State ?? WebSocketState.None;
-#else
-            return (WebSocketState)_client?.ReadyState;
-#endif
+            if (handler != null) await handler();
+        }
+ 
+        private static async Task RaiseEventAsync<T>(Func<T, Task>? handler, T arg)
+        {
+            if (handler != null) await handler(arg);
+        }
+ 
+        private static async Task RaiseEventAsync<T1, T2>(Func<T1, T2, Task>? handler, T1 a, T2 b)
+        {
+            if (handler != null) await handler(a, b);
+        }
+ 
+        public async ValueTask DisposeAsync()
+        {
+            await DisconnectAsync();
+            _socket.Dispose();
+            _cts.Dispose();
         }
     }
 }

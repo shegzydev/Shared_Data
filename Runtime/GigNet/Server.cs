@@ -1,76 +1,49 @@
 #if SERVER
 
 using System.Net;
-using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Collections.Generic;
 using UnityEngine;
 using System;
 using System.Collections.Concurrent;
-using Fleck;
 using SimpleJSON;
 using System.IO;
 using System.Text;
-using System.Net.WebSockets;
+using WebSocketSharp.Server;
+using WebSocketSharp;
 
 internal class Server : Agent
 {
-    public class ClientData
-    {
-        public object socket;
-        public long room;
-        public float timer;
-        public bool active;
-
-        public readonly SemaphoreSlim clientLock = new(1, 1);
-        public int pendingMessages;
-
-        public void Clean()
-        {
-            if (socket is IWebSocketConnection wsClient)
-            {
-                if (wsClient.IsAvailable)
-                    wsClient?.Close(1000);
-            }
-            else if (socket is TcpClient tcpClient)
-            {
-                if (tcpClient.Connected)
-                    tcpClient?.Close();
-            }
-            clientLock.Dispose();
-        }
-    }
-
     public static Server ServerInstance;
 
     APIServerBridge serverBridge;
-    WS ws;
 
-    RPCRouter rpcRouter;
     public int AssignableNetObjectID = 0;
     List<byte[]> messagePacks = new();
 
-    ConcurrentQueue<(long id, long target)> roomQueue = new();
     ConcurrentQueue<long> disconnectionEventQueue = new();
-    ConcurrentQueue<long> reconnectionEventQueue = new();
 
-    Dictionary<long, Room> Rooms = new() { { 12345, new Room(1, 1, true, null) } };
+    ConcurrentQueue<Action> actionQueue = new();
+
+    Dictionary<long, Room> Rooms = new() { { 12345, new Room(1, 1, true, null) { roomId = 12345 } } };
     Queue<(long roomID, DateTime expirationTime)> expiryQueue = new();
 
-    private readonly object lobbyLock = new();
-    static ConcurrentDictionary<long, ClientData> lobby = new();
-
-    long currRoomIndex;
     public static GameAgent_Server serv;
 
     public static int[] roomSizes;
-    static ThreadLocal<System.Random> threadRandom = new ThreadLocal<System.Random>(() => new System.Random());
 
-    ConcurrentQueue<(long clientId, byte[] dataPack)> SendQueue = new();
-    // SemaphoreSlim SendSignal = new(0);
-    // SemaphoreSlim _sendConcurrency = new SemaphoreSlim(200, 5000);
+    struct SendData
+    {
+        public PlayerData client;
+        public byte[] dataPack;
+        public DateTime createdTime;
+    }
+
+    ConcurrentQueue<SendData> SendQueue = new();
     CancellationTokenSource SendCancellationToken = new();
+
+    Thread socketThread;
 
     public Server(RPCRouter rPCRouter, int port, bool enableAudio)
     {
@@ -79,20 +52,14 @@ internal class Server : Agent
             throw new Exception("GameAgent_Server value is null, call Gignet.HookServerAgent(agent) before connecting...");
         }
 
+        ServerInstance = this;
+
         session = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        Debug.Log($"Starting Server with Session {session}");
 
         serv.OnRemoveRoom = (room) =>
         {
             CleanupRoom(room);
         };
-
-        ServerInstance = this;
-        rpcRouter = rPCRouter;
-
-        //tcp = new TCP(port);
-        // udp = new UDP(port);
-        // ws = new WS(port);
 
         serverBridge = new APIServerBridge(port);
         serverBridge.OnRequestReceived += (body) =>
@@ -103,13 +70,11 @@ internal class Server : Agent
 
         serverBridge.Start();
 
-        Task.Run(() => SendLoop(SendCancellationToken.Token)).ContinueWith(task =>
+        socketThread = new Thread(() =>
         {
-            if (task.IsFaulted)
-            {
-                GigNet.Log?.Invoke("Sending Loop is Jammed");
-            }
+            SendLoop(SendCancellationToken.Token);
         });
+        socketThread.Start();
     }
 
     public override void SendTCPMessage(byte[] data)
@@ -119,195 +84,156 @@ internal class Server : Agent
 
     public override void SendTCPMessageToRoom(long roomID, byte[] data)
     {
+        if (!Rooms.ContainsKey(roomID)) return;
+
         for (int i = 0; i < Rooms[roomID].playerCount; i++)
         {
-            long clientID = Rooms[roomID][i];
-            SendMessageTo(clientID, data);
+            SendMessageTo(Rooms[roomID][i], data);
         }
     }
 
     public void SendTCPMessageToPlayerInRoom(int roomID, int player, byte[] data)
     {
-        long clientID = Rooms[roomID][player];
-        SendMessageTo(clientID, data);
+        SendMessageTo(Rooms[roomID][player], data);
     }
 
-    void SendMessageTo(long clientID, byte[] data)
+    void SendMessageTo(PlayerData client, byte[] data)
     {
-        ClientData client = null;
-        lock (lobbyLock)
-        {
-            if (!lobby.TryGetValue(clientID, out client)) return;
-        }
-
-        if (!client.active) return;
-
-        SendQueue.Enqueue((clientID, data));
-        // SendSignal.Release();
-        Interlocked.Increment(ref client.pendingMessages);
+        SendQueue.Enqueue(new SendData { client = client, dataPack = data, createdTime = DateTime.UtcNow });
     }
 
     void SendMessage(byte[] data)
     {
-        foreach (var client in lobby)
-        {
-            SendMessageTo(client.Key, data);
-        }
+        // foreach (var client in lobby)
+        // {
+        //     SendMessageTo(client.Key, data);
+        // }
     }
 
     void CleanupRoom(long room)
     {
         if (!Rooms.ContainsKey(room)) return;
 
-        for (int i = 0; i < Rooms[room].playerCount; i++)
-        {
-            var client = Rooms[room][i];
-            lobby[client].Clean();
-            lobby.Remove(client, out var _);
-        }
-
         if (room == 12345) return;
 
         Rooms[room] = null;
         Rooms.Remove(room);
-        // recentlyEndedRooms.Add(room);
     }
 
     public override void CleanUp()
     {
         GigNet.Log?.Invoke("Cleaning up");
         SendCancellationToken.Cancel();
-        ws?.CleanUp();
         serverBridge?.CleanUp();
+        socketThread?.Join();
     }
 
-    async Task SendLoop(CancellationToken ct)
+    void SendLoop(CancellationToken ct)
     {
         while (!ct.IsCancellationRequested)
         {
-            try
+            while (SendQueue.TryDequeue(out var data))
             {
-                // await SendSignal.WaitAsync(ct);
-                while (SendQueue.TryDequeue(out var data))
+                if (data.client == null || data.dataPack == null)
                 {
-                    // await _sendConcurrency.WaitAsync(ct);
-                    _ = SendOneAsync(data);
-                    // .ContinueWith(_ =>
-                    // {
-                    //     _sendConcurrency.Release();
-                    // }, TaskContinuationOptions.ExecuteSynchronously);
+                    continue;
+                }
+
+                bool sent = false;
+
+                if (data.client.socket != null && data.client.socket.IsAlive)
+                {
+                    try
+                    {
+                        var sw = System.Diagnostics.Stopwatch.StartNew();
+                        data.client.socket.Send(data.dataPack);
+                        sw.Stop();
+                        GigNet.LogError($"Send took {sw.ElapsedMilliseconds}ms for player {data.client.id}");
+                        sent = true;
+                    }
+                    catch (Exception e)
+                    {
+                        // GigNet.LogError($"SendLoop WS send failed for player {data.client.id}: {e.Message}");
+                    }
+                }
+
+                if (!sent && data.client.writer != null)
+                {
+                    try
+                    {
+                        data.client.writer.writer.WriteLine(Convert.ToBase64String(data.dataPack));
+                        sent = true;
+                    }
+                    catch (Exception e)
+                    {
+                        // GigNet.LogError($"SendLoop writer send failed for player {data.client.id}: {e.Message}{e.StackTrace}");
+                        try
+                        {
+                            data.client.writer.eventSlim?.Set();
+                        }
+                        catch { }
+                    }
                 }
             }
-            catch (Exception)
-            {
-                break;
-            }
-        }
-    }
 
-    async Task SendOneAsync((long clientId, byte[] dataPack) data)
-    {
-        if (!lobby.TryGetValue(data.clientId, out var client)) return;
-        bool locked = false;
-        try
-        {
-            await client.clientLock.WaitAsync();
-
-            locked = true;
-
-            var socket = client.socket;
-
-            if (socket is IWebSocketConnection ws)
-            {
-                await ws.Send(data.dataPack);
-            }
-            else if (socket is TcpClient tcp)
-            {
-                await tcp.GetStream().WriteAsync(data.dataPack);
-            }
-
-        }
-        catch
-        {
-
-        }
-        finally
-        {
-            if (locked && client != null)
-                client.clientLock.Release();
-
-            if (client != null)
-            {
-                Interlocked.Decrement(ref client.pendingMessages);
-            }
+            Thread.Sleep(1);
         }
     }
 
     static readonly List<long> incompleteRooms = new List<long>();
 
+    public void DisconnectPlayer(long Id, long roomId)
+    {
+        actionQueue.Enqueue(() =>
+        {
+            if (Rooms.TryGetValue(roomId, out var room))
+            {
+                serv.OnPlayerDisconnect(roomId, room.GetClientIDInRoom(Id));
+            }
+        });
+    }
+
+    public void LosePlayer(long Id, long roomId)
+    {
+        actionQueue.Enqueue(() =>
+        {
+            if (Rooms.TryGetValue(roomId, out var room))
+            {
+                serv.PlayerLost(roomId, room.GetClientIDInRoom(Id));
+            }
+        });
+    }
+
+    public void RestorePlayer(long Id, long roomId)
+    {
+        actionQueue.Enqueue(() =>
+        {
+            if (Rooms.TryGetValue(roomId, out var room))
+            {
+                serv.PlayerRestored(roomId, room.GetClientIDInRoom(Id));
+            }
+        });
+    }
+
     public override void Tick()
     {
-        var timerKeys = lobby.Keys;
-        foreach (var entry in timerKeys)
+        foreach (var room in Rooms)
         {
-            var client = lobby[entry];
-            if (client.timer < 0) continue;
-
-            if (client.timer >= 5f)
-            {
-                Debug.Log($"Client {entry} timed out");
-                try
-                {
-                    if (client.socket is IWebSocketConnection wsClient) { wsClient.Close(1006); }
-                    else if (client.socket is TcpClient tcpClient) { tcpClient.Close(); }
-                }
-                catch { }
-                disconnectionEventQueue.Enqueue(entry);
-                client.timer = -10;
-                client.active = false;
-                continue;
-            }
-            client.timer += Time.deltaTime;
+            room.Value.TickRoom();
         }
 
-        while (roomQueue.TryDequeue(out var result))
+        // while (reconnectionEventQueue.TryDequeue(out long ID))
+        // {
+        //     if (!lobby.ContainsKey(ID)) { Debug.Log("not reconnecting..."); continue; }
+
+        //     long roomID = lobby[ID].room;
+        //     var room = Rooms[roomID];
+        //     serv.OnPlayerReconnect(roomID, room.GetClientIDInRoom(ID));
+        // }
+
+        while (actionQueue.TryDequeue(out var action))
         {
-            Debug.Log($"player {result.id} is being added to room");
-            if (result.target == -1)
-                while (!AddToRoom(result.id, currRoomIndex, () => currRoomIndex++))
-                {
-                    currRoomIndex++;
-                }
-            else
-            {
-                AddToRoom(result.id, result.target, () => { });
-            }
-        }
-
-        while (disconnectionEventQueue.TryDequeue(out long ID))
-        {
-            if (!lobby.ContainsKey(ID)) continue;
-
-            try
-            {
-                if (lobby[ID].socket is IWebSocketConnection wsClient) wsClient.Close();
-                else if (lobby[ID].socket is TcpClient tcpClient) tcpClient.Close();
-            }
-            catch { }
-
-            long roomID = lobby[ID].room;
-            if (!Rooms.ContainsKey(roomID)) continue;
-            var room = Rooms[roomID];
-            serv.OnPlayerDisconnect(roomID, room.GetClientIDInRoom(ID));
-        }
-
-        while (reconnectionEventQueue.TryDequeue(out long ID))
-        {
-            if (!lobby.ContainsKey(ID)) { Debug.Log("not reconnecting..."); continue; }
-
-            long roomID = lobby[ID].room;
-            var room = Rooms[roomID];
-            serv.OnPlayerReconnect(roomID, room.GetClientIDInRoom(ID));
+            action.Invoke();
         }
 
         //Release Room wey players no complete
@@ -341,41 +267,58 @@ internal class Server : Agent
         }
     }
 
-    bool AddToRoom(long client, long id, Action OnRoomFull)
+    void AddToRoom(long client, long id, WebSocket socket)
     {
-        var room = Rooms[id];
-
-        room.Add(client);
-
-        var data = Util.MergeArrays(BitConverter.GetBytes(16), BitConverter.GetBytes((int)PackType.RoomAssign), BitConverter.GetBytes(id), BitConverter.GetBytes(room.GetClientIDInRoom(client)));
-        SendMessageTo(client, data);
-
-        Debug.Log($"Added player {client} to room {id} with id {Rooms[id]}");
-
-        if (room.filled)
+        if (Rooms.TryGetValue(id, out var room) && room.Add(client, socket))
         {
-            /*var names = room.GetNames();
-            var filledData = Util.MergeArrays(BitConverter.GetBytes(4 + names.Length), BitConverter.GetBytes((int)PackType.RoomFilled), names);
-
-            for (int i = 0; i < room.playerCount; i++)
-            {
-                SendMessageTo(room[i], filledData);
-                Debug.Log($"notified player {room[i]} of room filled");
-            }
-
-            serv.CreateRoom(id, room.capacity, room.botCount, room.botWins);
-
-            serv.OnFilledRoom(id, room);*/
-
-            OnRoomComplete(id);
-
-            OnRoomFull?.Invoke();
+            var data = Util.MergeArrays(BitConverter.GetBytes(16), BitConverter.GetBytes((int)PackType.RoomAssign), BitConverter.GetBytes(id), BitConverter.GetBytes(room.GetClientIDInRoom(client)));
+            socket.Send(data);
+            GigNet.Log($"Added player {client} to room {id} with id {room.GetClientIDInRoom(client)}");
         }
-
-        return true;
+        else
+        {
+            var data = Util.MergeArrays(BitConverter.GetBytes(4), BitConverter.GetBytes((int)PackType.Rejected));
+            socket.Send(data);
+        }
     }
 
-    void OnRoomComplete(long id)
+    bool AddToRoom(long client, long id, Writer writer)
+    {
+        if (Rooms.TryGetValue(id, out var room) && room.Add(client, writer))
+        {
+            var data = Util.MergeArrays(BitConverter.GetBytes(16), BitConverter.GetBytes((int)PackType.RoomAssign), BitConverter.GetBytes(id), BitConverter.GetBytes(room.GetClientIDInRoom(client)));
+
+            try
+            {
+                writer.writer.WriteLine(Convert.ToBase64String(data));
+            }
+            catch (Exception e)
+            {
+                GigNet.LogError(e.Message + ":" + e.StackTrace);
+            }
+
+            GigNet.Log($"Added player {client} to room {id} with id {room.GetClientIDInRoom(client)}");
+
+            return true;
+        }
+        else
+        {
+            var data = Util.MergeArrays(BitConverter.GetBytes(4), BitConverter.GetBytes((int)PackType.Rejected));
+
+            try
+            {
+                writer.writer.WriteLine(Convert.ToBase64String(data));
+            }
+            catch (Exception e)
+            {
+                GigNet.LogError(e.Message + ":" + e.StackTrace);
+            }
+
+            return false;
+        }
+    }
+
+    public void OnRoomComplete(long id, int[] inactivePlayers)
     {
         var room = Rooms[id];
         var names = room.GetNames();
@@ -384,30 +327,45 @@ internal class Server : Agent
         for (int i = 0; i < room.playerCount; i++)
         {
             SendMessageTo(room[i], filledData);
-            Debug.Log($"notified player {room[i]} of room filled");
+            Debug.Log($"notified player {room[i].id} of room filled");
         }
 
-        serv.CreateRoom(id, room.capacity, room.botCount, room.botWins);
-
-        serv.OnFilledRoom(id, room);
+        actionQueue.Enqueue(() =>
+        {
+            serv.CreateRoom(id, room.capacity, room.botCount, room.botWins, inactivePlayers);
+        });
     }
 
-    void GenerateRoom(long id, int playerCount, int botCount, bool botWins, JSONNode participants, Dictionary<string, string> extras)
+    void GenerateRoom(long roomId, int playerCount, int botCount, bool botWins, JSONNode participants, Dictionary<string, string> extras)
     {
-        if (Rooms.ContainsKey(id)) throw new ArgumentException($"Room {id} already exists on the game server");
+        if (Rooms.ContainsKey(roomId)) throw new ArgumentException($"Room {roomId} already exists on the game server");
 
-        var names = new Dictionary<long, PlayerData>();
+        var playerData = new Dictionary<long, PlayerData>();
+
         for (int i = 0; i < participants.Count; i++)
         {
-            names.Add(participants[i]["id"].AsLong, new PlayerData { id = participants[i]["id"].AsLong, name = participants[i]["name"], actualID = participants[i]["actualId"], avatar = participants[i]["avatar"] });
+            var player = new PlayerData
+            {
+                id = participants[i]["id"].AsLong,
+                name = participants[i]["name"],
+                actualID = participants[i]["actualId"],
+                avatar = participants[i]["avatar"],
+                room = roomId
+            };
+
+            playerData.Add(participants[i]["id"].AsLong, player);
         }
 
-        var createdRoom = new Room(playerCount, botCount, botWins, names, extras);
-        Rooms.Add(id, createdRoom);
-        Debug.Log($"Created room {id} with {playerCount} players and {botCount} bots");
+        var createdRoom = new Room(playerCount, botCount, botWins, playerData, extras)
+        {
+            roomId = roomId,
+        };
+
+        Rooms.Add(roomId, createdRoom);
+        Debug.Log($"Created room {roomId} with {playerCount} players and {botCount} bots");
 
         var expirationTime = DateTimeOffset.UtcNow.AddHours(12);
-        expiryQueue.Enqueue((id, expirationTime.DateTime));
+        expiryQueue.Enqueue((roomId, expirationTime.DateTime));
     }
 
     public Dictionary<int, string> GetIDMaps(long roomID)
@@ -425,182 +383,39 @@ internal class Server : Agent
         lock (messagePacks) messagePacks.Add(payload);
     }
 
-    public Dictionary<long, long> IDMapping = new();
-    long nextID;
-    void HandlePayload(object client, ref long id, byte[] payload)
+    void HandlePayload(long id, long roomId, byte[] payload)
     {
         int packID = BitConverter.ToInt32(payload);
+
         switch ((PackType)packID)
         {
-            case PackType.RPC:
-                {
-                    rpcRouter.HandlePacket(payload);
-                    break;
-                }
             case PackType.NetEvent:
                 {
-                    if (id == -1)
-                    {
-                        Debug.Log($"trying to event with negative {id}");
-                        break;
-                    }
-
                     byte[] eventArgs = new byte[payload.Length - 4];
 
                     Buffer.BlockCopy(payload, 4, eventArgs, 0, eventArgs.Length);
 
-                    var room = lobby[id].room;
+                    var room = roomId;
                     var data = Util.MergeArrays(BitConverter.GetBytes(room), eventArgs);
 
                     NetworkManager.Instance.QueueEvent(ActionType.NetEvent, data);
-                    break;
-                }
-            case PackType.IDAssignment:
-                {
-                    long currClientID = BitConverter.ToInt64(payload, 4);
-                    long roomToJoin = BitConverter.ToInt64(payload, 12);
-                    long clientsession = BitConverter.ToInt64(payload, 20);
 
-                    if (clientsession != -1)//Reconnecting User
-                    {
-                        if (clientsession != session)
-                        {
-                            if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
-                            else if (client is TcpClient tcpClient) tcpClient.Close();
-                            Debug.Log("rejecting connection");
-                            break;
-                        }
-
-                        // long newID = Interlocked.Increment(ref nextID);
-                        id = currClientID;
-
-                        if (!Rooms.ContainsKey(roomToJoin))
-                        {
-                            if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
-                            else if (client is TcpClient tcpClient) tcpClient.Close();
-                            break;
-                        }
-
-                        lock (lobbyLock)
-                        {
-                            if (lobby.TryGetValue(id, out var clientData))
-                            {
-                                clientData.socket = null;
-                                lobby[id] = new ClientData { socket = client, active = true, room = roomToJoin, timer = 0 };
-
-                                roomQueue.Enqueue((id, roomToJoin));
-                                reconnectionEventQueue.Enqueue(id);
-                                Debug.Log($"Player {id} is back in room {clientData.room}");
-                            }
-                            else
-                            {
-                                if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
-                                else if (client is TcpClient tcpClient) tcpClient.Close();
-                                break;
-                            }
-                        }
-
-                        byte[] packIDBytes = BitConverter.GetBytes(packID);
-                        byte[] playerIdBytes = BitConverter.GetBytes(id);
-                        byte[] sessionBytes = BitConverter.GetBytes(session);
-                        byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
-
-                        var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
-                        SendMessageTo(id, data);
-
-                        Debug.Log($"Client {currClientID} Reconnected as {id}!");
-                    }
-                    else//New User
-                    {
-                        if (currClientID > -1)
-                        {
-                            id = currClientID;
-                        }
-                        else
-                        {
-                            do
-                            {
-                                id = Interlocked.Increment(ref nextID);
-                            } while (lobby.ContainsKey(id));
-                        }
-
-                        if (!Rooms.ContainsKey(roomToJoin))
-                        {
-                            if (client is IWebSocketConnection wsClient) wsClient.Close(1000);
-                            else if (client is TcpClient tcpClient) tcpClient.Close();
-                            break;
-                        }
-
-                        Debug.Log($"Client just requested for ID: {id} and wants to join room: {roomToJoin}");
-
-                        bool wasIn = false;
-                        lock (lobbyLock)
-                        {
-                            if (lobby.ContainsKey(id))
-                            {
-                                wasIn = true;
-                            }
-
-                            lobby[id] = null;
-                            lobby[id] = new ClientData { socket = client, active = true, room = roomToJoin, timer = 0 };
-                        }
-
-                        roomQueue.Enqueue((id, roomToJoin));
-                        if (wasIn) reconnectionEventQueue.Enqueue(id);
-
-                        byte[] packIDBytes = BitConverter.GetBytes(packID);
-                        byte[] playerIdBytes = BitConverter.GetBytes(id);
-                        byte[] sessionBytes = BitConverter.GetBytes(session);
-                        byte[] lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(packIDBytes, playerIdBytes, sessionBytes));
-
-                        var data = Util.MergeArrays(lenBytes, packIDBytes, playerIdBytes, sessionBytes);
-                        SendMessageTo(id, data);
-
-                        foreach (var pack in messagePacks)//Pooled Dispatches
-                        {
-                            SendMessageTo(id, pack);
-                        }
-                    }
-                    break;
-                }
-            case PackType.JoinRoom:
-                {
-                    //QueueRoom(id, rm => room = rm);//general room
-                    //AddToRoom(0, id);//customroom
-                    break;
-                }
-            case PackType.Instantiation:
-                {
-                    var packIdBytes = BitConverter.GetBytes(packID);
-                    var netObjID = BitConverter.GetBytes(AssignableNetObjectID++);
-                    var lenBytes = BitConverter.GetBytes(Util.LengthOfArrays(netObjID, payload));
-
-                    byte[] finalPayload = new byte[payload.Length - 4];
-                    Buffer.BlockCopy(payload, 4, finalPayload, 0, payload.Length - 4);
-
-                    var data = Util.MergeArrays(lenBytes, packIdBytes, netObjID, finalPayload);
-                    SendMessage(data);
-
-                    lock (messagePacks) messagePacks.Add(data);
-                    var localData = Util.MergeArrays(packIdBytes, netObjID, finalPayload);
-                    NetworkManager.Instance.QueueEvent(ActionType.Spawn, localData);
                     break;
                 }
             case PackType.Heartbeat:
                 {
-                    if (id == -1)
-                    {
-                        Debug.Log($"trying to heartbeat with negative {id}");
-                        break;
-                    }
+                    var player = Rooms[roomId].GetPlayer(id);
 
-                    lock (lobbyLock)
-                    {
-                        lobby[id].timer = 0;
-                    }
+                    player.ResetTimer();
+
+                    var clTime = BitConverter.ToInt64(payload, 4) / TimeSpan.TicksPerMillisecond;
+                    var currentTime = DateTimeOffset.UtcNow.Ticks / TimeSpan.TicksPerMillisecond;
+
+                    Debug.Log($"Received heartbeat from player {id} in room {roomId}. Client ticks: {clTime}, Server ticks: {currentTime}, Difference: {currentTime - clTime} ms");
 
                     var data = Util.MergeArrays(BitConverter.GetBytes(payload.Length), payload);
-                    SendMessageTo(id, data);
+                    SendMessageTo(player, data);
+
                     break;
                 }
             default:
@@ -610,90 +425,26 @@ internal class Server : Agent
         }
     }
 
-    class WS
-    {
-        WebSocketServer server;
-        public WS(int port)
-        {
-            FleckLog.Level = LogLevel.Info;
-            FleckLog.LogAction = (logLevel, message, exception) => { };
-
-            string protocol = "ws://";
-            server = new WebSocketServer($"{protocol}0.0.0.0:{port + 6}");
-            server.ListenerSocket.NoDelay = true;
-
-            server.Start(socket =>
-            {
-                long id = -1;
-
-                socket.OnOpen = () =>
-                {
-                    Debug.Log("Client connected!");
-                };
-
-                socket.OnClose = () =>
-                {
-                    Debug.Log("Client disconnected!");
-
-                    socket = null;
-                };
-
-                socket.OnError = (exc) =>
-                {
-                    socket.OnClose = null;
-                    socket.OnError = null;
-                    socket.OnBinary = null;
-
-                    try { socket.Close(1006); } catch { }
-                };
-
-                socket.OnMessage = message =>
-                {
-                    Debug.Log("received message");
-                };
-
-                socket.OnBinary = buffer =>
-                {
-                    int payloadLength = BitConverter.ToInt32(buffer);
-                    if (payloadLength > 0)
-                    {
-                        byte[] payload = new byte[payloadLength];
-                        Buffer.BlockCopy(buffer, 4, payload, 0, payloadLength);
-                        ServerInstance.HandlePayload(socket, ref id, payload);
-                    }
-                };
-            });
-
-            Debug.Log($"✅ WebSocket Server started at {protocol}<your-public-ip>:{port + 6}");
-        }
-        public void CleanUp()
-        {
-            server.Dispose();
-            Debug.Log("Server stopped.");
-        }
-    }
-
     class APIServerBridge
     {
-        private readonly HttpListener _listener;
         private readonly int _port;
-        private CancellationTokenSource _cts;
 
         public delegate void RequestReceivedHandler(string path, string method, string body);
         public event Action<string> OnRequestReceived;
 
-        public bool IsRunning => _listener.IsListening;
         public int Port => _port;
 
-        // Route tables
-        static Dictionary<string, Func<HttpListenerContext, Task>> GetRoutes = new();
-        static Dictionary<string, Func<HttpListenerContext, Task>> PostRoutes = new();
+        private HttpServer server;
+        private HttpRouter router;
 
         public APIServerBridge(int port)
         {
+            server = new HttpServer(port);
+            server.AddWebSocketService<WebService>("/ws");
+
+            router = new HttpRouter(server);
+
             _port = port;
-            _listener = new HttpListener();
-            _listener.Prefixes.Add($"http://*:{_port}/"); // allow all hostnames
 
             AppDomain.CurrentDomain.ProcessExit += delegate
             {
@@ -704,234 +455,91 @@ internal class Server : Agent
                 CleanUp();
             };
 
-            Post("/createRoom", async ctx =>
+            router.Post("/createRoom", async ctx =>
             {
+                string body = HttpRouter.ReadBody(ctx);
+                OnRequestReceived?.Invoke(body);
+                await HttpRouter.Json(ctx, "{\"ok\":true}");
+            });
+
+            router.Post("/leave", async ctx =>
+            {
+                long id = long.Parse(ctx.Request.QueryString["userId"]);
+                ServerInstance.disconnectionEventQueue.Enqueue(id);
+                await HttpRouter.Text(ctx, "Successfully left room");
+            });
+
+            router.Post("/msg", async ctx =>
+            {
+                long room = long.Parse(ctx.Request.QueryString["roomId"]);
+
+                if (!ServerInstance.Rooms.ContainsKey(room))
+                {
+                    await HttpRouter.Text(ctx, "room no longer exists");
+                    return;
+                }
+
+                long id = long.Parse(ctx.Request.QueryString["userId"]);
+
+                using var ms = new MemoryStream();
+                ctx.Request.InputStream.CopyTo(ms);
+                ms.Position = 4; // skip first 4 bytes
+                byte[] trimmed = new byte[ms.Length - 4];
+                ms.Read(trimmed, 0, trimmed.Length);
+
+                ServerInstance.HandlePayload(id, room, trimmed);
+
+                await HttpRouter.Text(ctx, "received message");
+            });
+
+            router.Get("/join", e =>
+            {
+                long id = long.Parse(e.Request.QueryString["userId"]);
+                long room = long.Parse(e.Request.QueryString["roomId"]);
+
                 try
                 {
-                    string body = await ReadBody(ctx);
-                    OnRequestReceived?.Invoke(body);
-                    await Json(ctx, "{\"ok\":true}");
+                    e.Response.ContentType = "text/event-stream";
+                    e.Response.AppendHeader("Cache-Control", "no-cache");
+                    e.Response.SendChunked = true;
+                    e.Response.StatusCode = 200;
+                    e.Response.OutputStream.Flush();
+
+                    var stream = e.Response.OutputStream;
+
+                    var writer = new StreamWriter(stream) { AutoFlush = true };
+                    var done = new ManualResetEventSlim(false);
+
+                    if (ServerInstance.AddToRoom(id, room, new Writer { writer = writer, eventSlim = done }))
+                    {
+                        GigNet.Log("Joined");
+                        done.Wait();
+                    }
                 }
                 catch (Exception ex)
                 {
-                    await Error(ctx, 500, ex.Message);
+                    GigNet.LogError(ex.Message + ":" + ex.StackTrace);
                 }
-            });
+                finally
+                {
+                    // GigNet.Log($"Closed connection on {id}");
+                    try { e.Response.Close(); } catch { }
+                }
 
-            Post("/joinRoom", async ctx =>
-            {
-                string token = ctx.Request.QueryString["userId"];
-                string room = ctx.Request.QueryString["roomId"];
+                return Task.CompletedTask;
             });
         }
 
         public void Start()
         {
-            if (IsRunning) return;
-
-            _cts = new CancellationTokenSource();
-
             try
             {
-                _listener.Start();
-                _ = ListenLoopAsync(_cts.Token);
-                Debug.Log($"✅ HTTP listener started on port {_port}");
+                server.Start();
+                Debug.Log($"HTTP listener started on port {_port}");
             }
             catch (Exception ex)
             {
-                Debug.Log($"❌ Failed to start listener on port {_port}: {ex.Message}");
-            }
-        }
-
-        private async Task ListenLoopAsync(CancellationToken token)
-        {
-            try
-            {
-                while (!token.IsCancellationRequested)
-                {
-                    var context = await _listener.GetContextAsync();
-                    _ = HandleRequestAsync(context); // fire and forget
-                }
-            }
-            catch (HttpListenerException)
-            {
-                // Expected when stopping — safe to ignore
-            }
-            catch (Exception ex)
-            {
-                Debug.Log($"⚠️ Listener error (port {_port}): {ex.Message}");
-            }
-        }
-
-        private async Task HandleRequestAsync(HttpListenerContext ctx)
-        {
-            /*try
-            {
-                if (context.Request.HttpMethod == "POST")
-                {
-                    string body;
-                    using (var reader = new StreamReader(context.Request.InputStream, context.Request.ContentEncoding))
-                        body = await reader.ReadToEndAsync();
-
-                    // Fire event so your game logic can process the request
-                    OnRequestReceived?.Invoke(context.Request.Url.AbsolutePath, context.Request.HttpMethod, body);
-
-                    // Default response
-                    var responseJson = "{\"ok\":true}";
-                    var buffer = Encoding.UTF8.GetBytes(responseJson);
-                    context.Response.ContentType = "application/json";
-                    context.Response.ContentLength64 = buffer.Length;
-                    context.Response.StatusCode = 200;
-                    await context.Response.OutputStream.WriteAsync(buffer, 0, buffer.Length);
-                    context.Response.Close();
-                }
-                else
-                {
-                    context.Response.StatusCode = 405;
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.Log($"⚠️ Request handling error on port {_port}: {ex.Message}");
-                context.Response.StatusCode = 500; // Let JS know it failed
-                byte[] buffer = Encoding.UTF8.GetBytes("{\"status\":\"error\",\"message\":\"" + ex.Message + "\"}");
-                context.Response.ContentType = "application/json";
-                context.Response.ContentLength64 = buffer.Length;
-                try
-                {
-                    context.Response.OutputStream.Write(buffer, 0, buffer.Length);
-                }
-                catch
-                { 
-                    //ignore if stream already dead
-                }
-            }
-            finally
-            {
-                context.Response.OutputStream.Close();
-            }*/
-            if (ctx.Request.IsWebSocketRequest)
-            {
-                await HandleWebSocket(ctx);
-                return;
-            }
-
-            string path = ctx.Request.Url.AbsolutePath;
-            string method = ctx.Request.HttpMethod;
-
-            // GET
-            if (method == "GET" && GetRoutes.TryGetValue(path, out var getHandler))
-            {
-                await getHandler(ctx);
-                return;
-            }
-
-            // POST
-            if (method == "POST" && PostRoutes.TryGetValue(path, out var postHandler))
-            {
-                await postHandler(ctx);
-                return;
-            }
-
-            // NOT FOUND
-            ctx.Response.StatusCode = 404;
-            await Text(ctx, "Route not found");
-        }
-
-        static void Get(string path, Func<HttpListenerContext, Task> handler)
-        {
-            GetRoutes[path] = handler;
-        }
-
-        static void Post(string path, Func<HttpListenerContext, Task> handler)
-        {
-            PostRoutes[path] = handler;
-        }
-
-        static async Task<string> ReadBody(HttpListenerContext ctx)
-        {
-            using StreamReader reader = new StreamReader(ctx.Request.InputStream);
-            return await reader.ReadToEndAsync();
-        }
-
-        static async Task Text(HttpListenerContext ctx, string text)
-        {
-            byte[] data = Encoding.UTF8.GetBytes(text);
-
-            ctx.Response.ContentType = "text/plain";
-            ctx.Response.ContentLength64 = data.Length;
-
-            await ctx.Response.OutputStream.WriteAsync(data);
-            ctx.Response.Close();
-        }
-
-        static async Task Json(HttpListenerContext ctx, string json)
-        {
-            byte[] data = Encoding.UTF8.GetBytes(json);
-
-            ctx.Response.ContentType = "application/json";
-            ctx.Response.ContentLength64 = data.Length;
-
-            await ctx.Response.OutputStream.WriteAsync(data);
-            ctx.Response.Close();
-        }
-
-        static async Task Error(HttpListenerContext ctx, int statusCode, string message)
-        {
-            string json =
-                $"{{ \"error\": \"{message}\", \"status\": {statusCode} }}";
-
-            byte[] data = Encoding.UTF8.GetBytes(json);
-
-            ctx.Response.StatusCode = statusCode;
-            ctx.Response.ContentType = "application/json";
-            ctx.Response.ContentLength64 = data.Length;
-
-            await ctx.Response.OutputStream.WriteAsync(data);
-
-            ctx.Response.Close();
-        }
-
-        static async Task HandleWebSocket(HttpListenerContext context)
-        {
-            WebSocketContext wsContext = await context.AcceptWebSocketAsync(null);
-            WebSocket socket = wsContext.WebSocket;
-
-            Console.WriteLine("WebSocket connected");
-
-            byte[] buffer = new byte[1024];
-
-            while (socket.State == WebSocketState.Open)
-            {
-                WebSocketReceiveResult result = await socket.ReceiveAsync(
-                    new ArraySegment<byte>(buffer),
-                    CancellationToken.None
-                );
-
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    await socket.CloseAsync(
-                        WebSocketCloseStatus.NormalClosure,
-                        "Closing",
-                        CancellationToken.None
-                    );
-                }
-                else
-                {
-                    string message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-
-                    Console.WriteLine($"WS: {message}");
-
-                    string reply = $"Echo: {message}";
-                    byte[] replyBytes = Encoding.UTF8.GetBytes(reply);
-
-                    await socket.SendAsync(
-                        new ArraySegment<byte>(replyBytes),
-                        WebSocketMessageType.Text,
-                        true,
-                        CancellationToken.None
-                    );
-                }
+                Debug.Log($"Failed to start listener on port {_port}: {ex.Message}");
             }
         }
 
@@ -939,16 +547,120 @@ internal class Server : Agent
         {
             try
             {
-                if (!IsRunning) return;
                 Debug.Log($"🛑 Stopping HTTP listener on port {_port}...");
-                _cts?.Cancel();
-                _listener?.Stop();
-                _listener?.Close();
+                server.Stop();
                 Debug.Log($"✅ Listener on port {_port} stopped and cleaned up.");
             }
             catch (Exception ex)
             {
                 Debug.Log($"⚠️ Cleanup error (port {_port}): {ex.Message}");
+            }
+        }
+
+        class WebService : WebSocketBehavior
+        {
+            long id, room;
+
+            protected override void OnMessage(MessageEventArgs e)
+            {
+                base.OnMessage(e);
+                if (e.IsBinary)
+                {
+                    try
+                    {
+                        byte[] copy = new byte[e.RawData.Length - 4];
+                        Buffer.BlockCopy(e.RawData, 4, copy, 0, copy.Length);
+                        ServerInstance.HandlePayload(id, room, copy);
+                    }
+                    catch (Exception ex)
+                    {
+                        GigNet.LogError(ex.Message);
+                    }
+                }
+            }
+
+            protected override void OnOpen()
+            {
+                base.OnOpen();
+
+                id = long.Parse(Context.QueryString["userId"]);
+                room = long.Parse(Context.QueryString["roomId"]);
+
+                ServerInstance.AddToRoom(id, room, Context.WebSocket);
+            }
+
+            protected override void OnError(WebSocketSharp.ErrorEventArgs e)
+            {
+                base.OnError(e);
+            }
+
+            protected override void OnClose(CloseEventArgs e)
+            {
+                base.OnClose(e);
+            }
+        }
+
+        public class HttpRouter
+        {
+            private readonly HttpServer _server;
+            private readonly Dictionary<string, Func<HttpRequestEventArgs, Task>> _getRoutes = new();
+            private readonly Dictionary<string, Func<HttpRequestEventArgs, Task>> _postRoutes = new();
+
+            public HttpRouter(HttpServer server)
+            {
+                _server = server;
+                _server.OnGet += async (sender, e) => await Dispatch(_getRoutes, e);
+                _server.OnPost += async (sender, e) => await Dispatch(_postRoutes, e);
+            }
+
+            public void Get(string path, Func<HttpRequestEventArgs, Task> handler) => _getRoutes[path] = handler;
+            public void Post(string path, Func<HttpRequestEventArgs, Task> handler) => _postRoutes[path] = handler;
+
+            private async Task Dispatch(Dictionary<string, Func<HttpRequestEventArgs, Task>> routes, HttpRequestEventArgs e)
+            {
+                var path = e.Request.Url.AbsolutePath;
+
+                if (routes.TryGetValue(path, out var handler))
+                {
+                    try { await handler(e); }
+                    catch (Exception ex) { await Error(e, 500, ex.Message); }
+                }
+                else
+                {
+                    await Error(e, 404, "Not found");
+                }
+            }
+
+            public static string ReadBody(HttpRequestEventArgs e)
+            {
+                using var reader = new StreamReader(e.Request.InputStream, e.Request.ContentEncoding);
+                return reader.ReadToEnd();
+            }
+
+            public static Task Json(HttpRequestEventArgs e, string json)
+            {
+                var bytes = Encoding.UTF8.GetBytes(json);
+                e.Response.ContentType = "application/json";
+                e.Response.ContentLength64 = bytes.Length;
+                e.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                e.Response.Close();
+                return Task.CompletedTask;
+            }
+
+            public static Task Text(HttpRequestEventArgs e, string text)
+            {
+                var bytes = Encoding.UTF8.GetBytes(text);
+                e.Response.ContentType = "text/plain";
+                e.Response.ContentLength64 = bytes.Length;
+                e.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                e.Response.Close();
+                return Task.CompletedTask;
+            }
+
+            public static Task Error(HttpRequestEventArgs e, int code, string message)
+            {
+                e.Response.StatusCode = code;
+                return Text(e, message);
             }
         }
     }

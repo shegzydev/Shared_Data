@@ -559,7 +559,5 @@ public class WordGame
         }
     }
 
-#if SERVER
     public int[] GetScores => scores;
-#endif
 }

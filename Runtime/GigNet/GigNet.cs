@@ -100,6 +100,7 @@ public class GigNet
     public static Action OnJoinedRoom;
 
     public static string Alias;
+    public static string Status;
 
     public static int IDInRoom
     {
@@ -122,7 +123,7 @@ public class GigNet
 
     public static Action<bool> OnTimeOut;
     public static Action OnForceQuit;
-    public static Action<Dictionary<int, (string name, string avatar)>> OnRoomFilled;
+    public static Action<List<(string name, string avatar)>> OnRoomFilled;
     public static void Init(string gameName, int port)
     {
         NetworkManager.Init(gameName, port, false);

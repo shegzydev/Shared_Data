@@ -117,9 +117,11 @@ public class Whot
 
     HashSet<int> leftPlayers = new();
 
-    public Whot(int numplayers)
+    public Whot(int numplayers, int turn = 0)
     {
+        timer = 30f;
         this.numplayers = numplayers;
+        this.turn = turn;
         cards = CardDeck.CreateDeck();
     }
 
@@ -246,11 +248,12 @@ public class Whot
 
         if (cards[card] == 1)
         {
-            if (HasFollowUpForHold(cards[card].Suit))
-                HoldOn();
-            else
-                Pick(turn);
-                // NextTurn();
+            //if (HasFollowUpForHold(cards[card].Suit))
+            HoldOn();
+            OnPassMessage?.Invoke(5, turn);
+            //else
+            //Pick(turn);
+            // NextTurn();
         }
         else if (cards[card] == 2)
         {
@@ -267,7 +270,10 @@ public class Whot
         else if (cards[card] == 8)
         {
             if (!NextPlayerHas8())
+            {
                 Skip();
+                OnPassMessage?.Invoke(6, turn);
+            }
             else
                 NextTurn();
         }
@@ -361,7 +367,7 @@ public class Whot
 
         OnServerPickCard?.Invoke((player, false));
 
-#if SERVER
+#if !CLIENT
         if (!DeckEmpty())
         {
             NextTurn();
@@ -390,7 +396,7 @@ public class Whot
             }
         }
 
-#if SERVER
+#if !CLIENT
 
         if (!DeckEmpty())
         {
@@ -500,7 +506,6 @@ public class Whot
     public void Ready()
     {
         initting = false;
-
     }
 
     public void UpdateTimer(float delta)
@@ -515,7 +520,7 @@ public class Whot
         {
             if (waitingForSuitSelect)
             {
-                ChooseNextSuit((Suit)UnityEngine.Random.Range(0, 5), turn);
+                ChooseNextSuit((Suit)rng.Next(5), turn);
             }
             else
             {
@@ -523,6 +528,8 @@ public class Whot
             }
         }
     }
+
+    Random rng = new Random();
 
     public int DeckSize => deck != null ? deck.Count : 52;
     public int[] handsSize
@@ -684,6 +691,7 @@ public class Whot
             {
                 writer.Write(cards[i].ToBytes());
             }
+            writer.Write(turn);
             return stream.ToArray();
         }
     }
@@ -700,6 +708,7 @@ public class Whot
                 byte[] cardBytes = reader.ReadBytes(Card.ByteSize);
                 tmpCards[i] = Card.BuildCard(cardBytes);
             }
+            turn = reader.ReadInt32();
 
             return tmpCards;
         }

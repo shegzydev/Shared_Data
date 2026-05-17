@@ -21,7 +21,7 @@ public enum TargetGroup
 
 internal enum PackType
 {
-    RPC, IDAssignment, Instantiation, Heartbeat, Destroy, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom, ForceQuit
+    RPC, IDAssignment, Instantiation, Heartbeat, Destroy, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom, ForceQuit, Rejected, LeftRoom
 }
 
 internal enum ActionType
@@ -138,10 +138,9 @@ internal class NetworkManager
 
         GigNet.Log?.Invoke("I'm a client");
         serverIP = IPS[ServerEnum];
-        Client.OnConnected = () => RequestID(roomToConnect, idToBeAssigned);
-        Client.OnReceivedID = (id) =>
+        Client.OnConnected = () =>
         {
-            ID = id;
+            ID = idToBeAssigned;
             GigNet.Log?.Invoke($"I've been assigned with id {ID}");
             GigNet.OnConnect?.Invoke();
 
@@ -151,8 +150,8 @@ internal class NetworkManager
             heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat());
             timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(30));
         };
-        agent = new Client(rpcRouter, url, port, enableAudio, roomToConnect);
 
+        agent = new Client(rpcRouter, url, port, idToBeAssigned, roomToConnect);
         stopwatch = Stopwatch.StartNew();
 #endif
     }
@@ -181,20 +180,6 @@ internal class NetworkManager
     public void FixedUpdate()
     {
         agent?.FixedTick();
-    }
-
-    void RequestID(long roomToConnect, long idToBeAssigned)
-    {
-        GigNet.Log?.Invoke("Requesting ID");
-
-        byte[] packID = BitConverter.GetBytes((int)PackType.IDAssignment);
-        byte[] playerID = BitConverter.GetBytes(idToBeAssigned);
-        byte[] roomBytes = BitConverter.GetBytes(roomToConnect);
-        byte[] session = BitConverter.GetBytes(agent.session);
-        byte[] len = BitConverter.GetBytes(Util.LengthOfArrays(packID, playerID, roomBytes, session));
-
-        var data = Util.MergeArrays(len, packID, playerID, roomBytes, session);
-        QueueEvent(ActionType.Dispatch, data);
     }
 
     void HandleQueues()
@@ -249,16 +234,22 @@ internal class NetworkManager
                         RoomID = BitConverter.ToInt64(eventPayload, 0);
                         IDInRoom = BitConverter.ToInt32(eventPayload, 8);
 
-                        GigNet.Log?.Invoke($"I've ben assigned to room {RoomID} with assigned id {IDInRoom}");
-
+                        GigNet.Log?.Invoke($"I've been assigned to room {RoomID} with assigned id {IDInRoom}");
+#if CLIENT
+                        Client.OnReceivedID?.Invoke(0);
+#endif
                         GigNet.OnJoinedRoom?.Invoke();
+
+                        GigNet.Status = $"Joined room {RoomID}... Waiting for other players";
 
                         break;
                     }
                 case ActionType.RoomFilled:
                     {
+                        GigNet.Log?.Invoke("Room filled");
+
                         var bytes = (byte[])data.payload;
-                        var names = new Dictionary<int, (string name, string avatar)>();
+                        var names = new List<(string name, string avatar)>();
 
                         int len;
                         if ((len = BitConverter.ToInt32(bytes)) > 0)
@@ -269,7 +260,7 @@ internal class NetworkManager
                             JSONNode json = JSONNode.Parse(jsonString);
                             for (int i = 0; i < json.Count; i++)
                             {
-                                names.Add(i, (json[i]["name"], json[i]["avatar"]));
+                                names.Add((json[i]["name"], json[i]["avatar"]));
                             }
                         }
 #if CLIENT
@@ -279,6 +270,8 @@ internal class NetworkManager
                             stopwatch.Stop();
                         }
 #endif
+                        GigNet.Status = "All players have joined! Starting game...";
+
                         break;
                     }
                 default: { break; }

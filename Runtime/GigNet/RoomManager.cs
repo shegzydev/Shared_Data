@@ -1,70 +1,198 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Threading;
 using SimpleJSON;
+using UnityEngine;
+using WebSocketSharp;
 
-public class RoomManager
+public class Writer
 {
-
+    public StreamWriter writer;
+    public ManualResetEventSlim eventSlim;
 }
 
-public struct PlayerData
+public class PlayerData
 {
-    public long id;
+    public long id, room;
     public string name;
     public string actualID;
     public string avatar;
+    public WebSocket socket;
+    public Writer writer;
+
+    public readonly SemaphoreSlim clientLock = new(1, 1);
+    public bool ready = false;
+
+    public void InitSocket(WebSocket _socket)
+    {
+        socket = _socket;
+        Init();
+    }
+
+    public void InitWriter(Writer _writer)
+    {
+        writer = _writer;
+        Init();
+    }
+
+    void Init()
+    {
+#if SERVER
+        if (ready) Server.ServerInstance.RestorePlayer(room, id);
+#endif
+        ready = true;
+        active = true;
+        pingTimer = 0;
+        lostConnectionTriggered = false;
+    }
+
+    float pingTimer = 0;
+    bool active;
+    bool lostConnectionTriggered = false;
+
+    public void UpdatePingTimer()
+    {
+        if (!active) return;
+
+        pingTimer += Time.deltaTime;
+
+        if (!lostConnectionTriggered && pingTimer >= 5f)
+        {
+            lostConnectionTriggered = true;
+            writer?.eventSlim?.Set();
+#if SERVER
+            Server.ServerInstance.LosePlayer(id, room);
+#endif
+        }
+
+        if (pingTimer >= 15f)
+        {
+            active = false;
+            ready = false;
+#if SERVER
+            Server.ServerInstance.DisconnectPlayer(id, room);
+#endif
+        }
+    }
+
+    public void ResetTimer()
+    {
+        pingTimer = 0;
+    }
 }
 
 public class Room
 {
+    public long roomId;
     public int capacity;
     public int botCount { get; }
     public bool botWins { get; }
 
     long[] clientIDs;
 
-    Dictionary<long, PlayerData> dataDict = new() { { 12345, new PlayerData { id = 12345, name = "Olu" } }, { 67890, new PlayerData { id = 67890, name = "Ola" } } };
+    Dictionary<long, PlayerData> dataDict = new() { { 12345, new PlayerData { id = 12345, name = "Olu", room = 12345 } }, { 67890, new PlayerData { id = 67890, name = "Ola", room = 12345 } } };
     Dictionary<long, int> playerIds = new();
     Dictionary<string, string> extraData = new();
 
     public DateTime creationTime;
 
+    public bool isClosed;
+    float startTime = 0;
+
     public Room(int _capacity, int _bots, bool _botWin, Dictionary<long, PlayerData> _names, Dictionary<string, string> extras = null)
     {
-        if (_names != null) { dataDict = _names; }
+        if (_names != null) dataDict = _names;
+
         botWins = _botWin;
         botCount = _bots;
         capacity = _capacity;
-        clientIDs = new long[capacity];
+
         extraData = extras;
         creationTime = DateTime.UtcNow;
-    }
 
-    public bool filled => playerIds.Count == capacity;
-    public int playerCount => playerIds.Count;
+        startTime = 0;
 
-    public void Add(long clientid)
-    {
-        if (playerIds.ContainsKey(clientid)) return;
-        int index = playerIds.Count;
-        clientIDs[index] = clientid;
-        playerIds[clientid] = index;
-    }
-
-    public long this[int index]
-    {
-        get => clientIDs[index];
-        set
+        clientIDs = new long[dataDict.Count];
+        playerIds = new Dictionary<long, int>(dataDict.Count);
+        int index = 0;
+        foreach (var kvp in dataDict)
         {
-            clientIDs[index] = value;
+            clientIDs[index] = kvp.Key;
+            playerIds[kvp.Key] = index;
+            index++;
         }
     }
 
-    public bool Has(long idToCheck)
+    public bool filled => dataDict.Count(x => x.Value.ready) >= capacity;
+
+    public int playerCount => dataDict.Count;
+    int activeCount => dataDict.Count(x => x.Value.ready);
+
+    public void TickRoom()
     {
-        var has = dataDict.Where(x => x.Value.id == idToCheck).ToArray(); ;
-        return has.Length > 0;
+        foreach (var player in dataDict)
+        {
+            player.Value.UpdatePingTimer();
+        }
+
+        if (!isClosed)
+        {
+            startTime += Time.deltaTime;
+            if (startTime >= 30)
+            {
+                // isClosed = true;
+                // int[] inactivePlayers = dataDict.Where(x => !x.Value.ready).Select(x => playerIds[x.Key]).ToArray();
+                // if (playerCount > 0) OnStart?.Invoke(inactivePlayers);
+            }
+        }
+    }
+
+    public bool Add(long clientid, WebSocket socket)
+    {
+        if (isClosed && !dataDict[clientid].ready) return false;
+
+        dataDict[clientid].InitSocket(socket);
+
+        if (filled)
+        {
+            isClosed = true;
+            int[] inactivePlayers = dataDict.Where(x => !x.Value.ready).Select(x => playerIds[x.Key]).ToArray();
+#if SERVER
+            Server.ServerInstance.OnRoomComplete(roomId, inactivePlayers);
+#endif
+        }
+
+        return true;
+    }
+
+    public bool Add(long clientid, Writer writer)
+    {
+        if (isClosed && !dataDict[clientid].ready) return false;
+
+        dataDict[clientid].InitWriter(writer);
+
+        if (filled)
+        {
+            isClosed = true;
+            int[] inactivePlayers = dataDict.Where(x => !x.Value.ready).Select(x => playerIds[x.Key]).ToArray();
+#if SERVER
+            Server.ServerInstance.OnRoomComplete(roomId, inactivePlayers);
+#endif
+        }
+
+        return true;
+    }
+
+    public PlayerData this[int index]
+    {
+        get => dataDict[clientIDs[index]];
+    }
+
+    public PlayerData GetPlayer(long id)
+    {
+        return dataDict[id];
     }
 
     public bool GetExtraData(string key, out string value)
@@ -76,14 +204,7 @@ public class Room
 
     public int GetClientIDInRoom(long clientID)
     {
-        try
-        {
-            return playerIds[clientID];
-        }
-        catch (NullReferenceException)
-        {
-            return -1;
-        }
+        return playerIds[clientID];
     }
 
     public byte[] GetNames()
@@ -95,34 +216,33 @@ public class Room
 
         JSONObject nameData = new JSONObject();
 
-        HashSet<string> assigned = new();
-
-        for (int i = 0; i < clientIDs.Length; i++)
+        dataDict.OrderBy(x => playerIds[x.Key]).ToList()
+        .ForEach(x =>
         {
             var tmp = new JSONObject();
-            tmp.Add("name", dataDict[clientIDs[i]].name);
-            tmp.Add("avatar", dataDict[clientIDs[i]].avatar);
-            nameData.Add(i.ToString(), tmp);
-            assigned.Add(dataDict[clientIDs[i]].name);
-        }
+            var player = x.Value;
+            tmp.Add("name", player.name);
+            tmp.Add("avatar", player.avatar);
+            nameData.Add(playerIds[x.Key].ToString(), tmp);
+        });
 
-        if (assigned.Count < dataDict.Count)
+        /*for (int i = 0; i < dataDict.Count; i++)
         {
-            foreach (var entry in dataDict)
-            {
-                if (assigned.Contains(entry.Value.name)) continue;
-                var tmp = new JSONObject();
-                tmp.Add("name", entry.Value.name);
-                tmp.Add("avatar", entry.Value.avatar);
-                nameData.Add(nameData.Count.ToString(), tmp);
-            }
-        }
+            var tmp = new JSONObject();
+
+            var player = this[i];
+            tmp.Add("name", player.name);
+            tmp.Add("avatar", player.avatar);
+
+            nameData.Add(playerIds[player.id].ToString(), tmp);
+        }*/
 
         string nameString = nameData.ToString();
         var namebytes = System.Text.Encoding.UTF8.GetBytes(nameString);
         var lenBytes = BitConverter.GetBytes(namebytes.Length);
         return GigNet.PackBytes(lenBytes, namebytes);
     }
+
     public Dictionary<int, string> GetIDs()
     {
         var IDMap = new Dictionary<int, string>();
@@ -145,3 +265,4 @@ public class Room
         return IDMap;
     }
 }
+

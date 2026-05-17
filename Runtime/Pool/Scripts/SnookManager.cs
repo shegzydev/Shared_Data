@@ -68,6 +68,8 @@ public class SnookManager : MonoBehaviour
                 OnSlam?.Invoke(flag, speed);
             };
         }
+
+        OnTurnChange?.Invoke(turn);
     }
 
     public void Push(int index, Vector2 dir)
