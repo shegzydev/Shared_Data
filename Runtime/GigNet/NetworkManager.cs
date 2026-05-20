@@ -140,6 +140,8 @@ internal class NetworkManager
         serverIP = IPS[ServerEnum];
         Client.OnConnected = () =>
         {
+            GigNet.OnTimeOut?.Invoke(false);
+
             ID = idToBeAssigned;
             GigNet.Log?.Invoke($"I've been assigned with id {ID}");
             GigNet.OnConnect?.Invoke();

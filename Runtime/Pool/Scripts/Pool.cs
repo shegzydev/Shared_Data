@@ -5,7 +5,7 @@ using UnityEngine;
 
 public enum NetEvents : byte
 {
-    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack
+    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack, Foul, Scratch
 }
 
 #if SERVER

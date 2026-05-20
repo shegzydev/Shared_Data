@@ -119,7 +119,7 @@ public class Whot
 
     public Whot(int numplayers, int turn = 0)
     {
-        timer = 30f;
+        timer = 22f;
         this.numplayers = numplayers;
         this.turn = turn;
         cards = CardDeck.CreateDeck();
