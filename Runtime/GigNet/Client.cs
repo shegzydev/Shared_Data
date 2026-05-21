@@ -87,14 +87,14 @@ internal class Client : Agent
     private CancellationTokenSource retryCts;
     int maxWSRetries = 15;
 
-    public void ShutDown()
+    public async void ShutDown()
     {
         actionQueue.Enqueue(() =>
         {
             GigNet.Status = "Client Timeout...Attempting Retry";
             GigNet.OnTimeOut?.Invoke(true);
         });
-        wsClient?.DisconnectAsync(System.Net.WebSockets.WebSocketCloseStatus.InternalServerError, "abnormal").Wait();
+        await wsClient?.DisconnectAsync(System.Net.WebSockets.WebSocketCloseStatus.InternalServerError, "abnormal");
     }
 
     async Task StartClientWSConnection(string host, int port, long userId, long roomId)
@@ -132,6 +132,7 @@ internal class Client : Agent
                     connection = Connection.WS;
                     isRetrying = false; // ✅ Fully connected, release lock
                     tcs.TrySetResult(true);
+                    retriesLeft = maxWSRetries;
                 };
 
                 wsClient.OnDataReceived += async (buffer) =>
@@ -158,6 +159,8 @@ internal class Client : Agent
                     GigNet.Log?.Invoke($"🔌 Disconnected. {message}");
                     wsClient = null;
                     tcs.TrySetResult(false); // ✅ Signal the loop to handle retry
+
+                    await StartClientWSConnection(host, port, userId, roomId);
                 };
 
                 await wsClient.ConnectAsync();
@@ -266,6 +269,7 @@ internal class Client : Agent
                     GigNet.Status = "Connected to server...(SSE)";
                 });
 
+                attempts = 0;
                 connection = Connection.SSE;
 
                 while (running)

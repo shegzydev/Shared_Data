@@ -5,7 +5,7 @@ using System.Linq;
 
 public enum PoolNetEvents : byte
 {
-    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack, Foul, Scratch
+    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack, Foul, Scratch, Rejoin
 }
 
 namespace PhysicsEngine
@@ -489,7 +489,7 @@ namespace PhysicsEngine
 
             foreach (var pottedBall in potted)
             {
-                pottedBall.ApplyGravity(-400000);
+                pottedBall.ApplyGravity(-500000);
             }
 
             physics.Tick();

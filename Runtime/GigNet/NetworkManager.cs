@@ -151,7 +151,7 @@ internal class NetworkManager
             if (timeoutRoutine != null) CoroutineRunnner.StopCoroutine(timeoutRoutine);
 
             heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat());
-            timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(7.5f));
+            timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(5f));
         };
 
         agent = new Client(rpcRouter, url, port, idToBeAssigned, roomToConnect);
