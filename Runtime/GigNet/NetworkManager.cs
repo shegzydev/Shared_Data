@@ -150,7 +150,7 @@ internal class NetworkManager
             if (timeoutRoutine != null) CoroutineRunnner.StopCoroutine(timeoutRoutine);
 
             heartbeatRoutine = CoroutineRunnner.StartCoroutine(Heartbeat());
-            timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(30));
+            timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(7.5f));
         };
 
         agent = new Client(rpcRouter, url, port, idToBeAssigned, roomToConnect);
@@ -346,6 +346,7 @@ internal class NetworkManager
         }
     }
 
+    bool timeOut = false;
     public IEnumerator WatchTimeOut(float timeOutInSeconds = 30)
     {
         Agent.receivedHeartbeat = Time.time;
@@ -354,13 +355,16 @@ internal class NetworkManager
         {
             var elapsed = Time.time - Agent.receivedHeartbeat;
 
-            if (elapsed > timeOutInSeconds * 2)
+            if (elapsed > timeOutInSeconds * 2 && timeOut)
             {
+                timeOut = false;
                 GigNet.OnForceQuit?.Invoke();
                 break;
             }
-            else if (elapsed > timeOutInSeconds)
+            else if (elapsed > timeOutInSeconds && !timeOut)
             {
+                timeOut = true;
+                ((Client)agent).ShutDown();
                 GigNet.OnTimeOut?.Invoke(true);
             }
             else

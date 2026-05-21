@@ -87,6 +87,11 @@ internal class Client : Agent
     private CancellationTokenSource retryCts;
     int maxWSRetries = 15;
 
+    public void ShutDown()
+    {
+        wsClient?.DisconnectAsync(System.Net.WebSockets.WebSocketCloseStatus.InternalServerError, "abnormal").Wait();
+    }
+
     async Task StartClientWSConnection(string host, int port, long userId, long roomId)
     {
         if (isRetrying) return; // ✅ Block concurrent retry chains
@@ -397,6 +402,10 @@ internal class Client : Agent
                 }
             case PackType.Rejected:
                 {
+                    actionQueue.Enqueue(() =>
+                    {
+                        GigNet.OnForceQuit?.Invoke();
+                    });
                     break;
                 }
             default:
