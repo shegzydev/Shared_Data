@@ -15,6 +15,8 @@ namespace PhysicsEngine
         public const double dt = tickMs / 1000;
         public const double minVelocity = 300.0;       // 0.01 * SCALE
         public const double ballRadius = 2925.0;      // 2.925 * 1000
+
+        public static bool circleCollided, edgeCollided = false;
     }
 
     public class Logger
@@ -536,7 +538,11 @@ namespace PhysicsEngine
             // Move to impact point
             circle.Center = hitPoint;
 
-            onCollision?.Invoke((circle, edge));
+            if (!PhysicsParameters.edgeCollided)
+            {
+                onCollision?.Invoke((circle, edge));
+                PhysicsParameters.edgeCollided = true;
+            }
 
             Vector2 normal = edgeNormal;
 
@@ -610,7 +616,11 @@ namespace PhysicsEngine
             a.Center += a.Velocity * (t0 * dt);
             b.Center += b.Velocity * (t0 * dt);
 
-            onCollision?.Invoke((a, b));
+            if (!PhysicsParameters.circleCollided)
+            {
+                onCollision?.Invoke((a, b));
+                PhysicsParameters.circleCollided = true;
+            }
 
             Vector2 normal = (b.Center - a.Center).Normalized();
 
@@ -650,7 +660,11 @@ namespace PhysicsEngine
 
             if (dist >= circle.Radius) return;
 
-            onCollision?.Invoke((circle, edge));
+            if (!PhysicsParameters.edgeCollided)
+            {
+                onCollision?.Invoke((circle, edge));
+                PhysicsParameters.edgeCollided = true;
+            }
 
             Vector2 normal;
             if (dist < EPSILON)
@@ -685,8 +699,12 @@ namespace PhysicsEngine
             double minDist = a.Radius + b.Radius;
 
             if (dist >= minDist) return;
-
-            onCollision?.Invoke((a, b));
+            
+            if (!PhysicsParameters.circleCollided)
+            {
+                onCollision?.Invoke((a, b));
+                PhysicsParameters.circleCollided = true;
+            }
 
             Vector2 normal;
             if (dist < EPSILON)
@@ -764,10 +782,12 @@ namespace PhysicsEngine
             Render(alpha);
         }
 
-        bool circleCollided, edgeCollided = false;
+
 
         private void FixedTick()
         {
+            PhysicsParameters.circleCollided = PhysicsParameters.edgeCollided = false;
+
             foreach (var c in circles)
             {
                 if (c.IsPocketed) continue;

@@ -85,7 +85,7 @@ internal class Client : Agent
 
     private bool isRetrying = false; // separate from connecting
     private CancellationTokenSource retryCts;
-    int maxWSRetries = 15;
+    int maxWSRetries = 25;
 
     public async void ShutDown()
     {
@@ -205,7 +205,7 @@ internal class Client : Agent
                 if (retriesLeft > 0)
                 {
                     retriesLeft--;
-                    await Task.Delay(500);
+                    await Task.Delay(1000);
                     // loop continues ✅
                 }
                 else
@@ -222,7 +222,7 @@ internal class Client : Agent
 
     async Task StartSSEConnection(string host, int port, long userId, long roomId)
     {
-        int retryDelay = 3000;
+        int retryDelay = 1000;
         int maxRetries = 25;
         int attempts = 0;
         running = true;
@@ -269,7 +269,6 @@ internal class Client : Agent
                     GigNet.Status = "Connected to server...(SSE)";
                 });
 
-                attempts = 0;
                 connection = Connection.SSE;
 
                 while (running)
