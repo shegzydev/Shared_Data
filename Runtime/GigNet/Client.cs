@@ -89,6 +89,11 @@ internal class Client : Agent
 
     public void ShutDown()
     {
+        actionQueue.Enqueue(() =>
+        {
+            GigNet.Status = "Client Timeout...Attempting Retry";
+            GigNet.OnTimeOut?.Invoke(true);
+        });
         wsClient?.DisconnectAsync(System.Net.WebSockets.WebSocketCloseStatus.InternalServerError, "abnormal").Wait();
     }
 

@@ -140,6 +140,7 @@ internal class NetworkManager
         serverIP = IPS[ServerEnum];
         Client.OnConnected = () =>
         {
+            timeOut = false;
             GigNet.OnTimeOut?.Invoke(false);
 
             ID = idToBeAssigned;
@@ -357,15 +358,15 @@ internal class NetworkManager
 
             if (elapsed > timeOutInSeconds * 2 && timeOut)
             {
-                timeOut = false;
-                GigNet.OnForceQuit?.Invoke();
+                // timeOut = false;
+                // GigNet.OnForceQuit?.Invoke();
                 break;
             }
             else if (elapsed > timeOutInSeconds && !timeOut)
             {
                 timeOut = true;
-                ((Client)agent).ShutDown();
                 GigNet.OnTimeOut?.Invoke(true);
+                ((Client)agent).ShutDown();
             }
             else
             {
