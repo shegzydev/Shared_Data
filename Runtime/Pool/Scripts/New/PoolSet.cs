@@ -147,6 +147,7 @@ namespace PhysicsEngine
             {
                 HoleHandler(data);
                 potted.Add(data.ball);
+                OnPocket();
             };
 
             physics.OnBallCollision = data =>
@@ -156,12 +157,14 @@ namespace PhysicsEngine
                 {
                     firstHit ??= data.A == cueBall ? data.B : data.A;
                 }
+                OnBallHit();
             };
 
             physics.OnEdgeCollision = data =>
             {
                 if (!acceptCollisions) return;
                 edgeHit = true;
+                OnEdgeHit();
             };
 
             physics.Stopped = () =>
@@ -532,7 +535,6 @@ namespace PhysicsEngine
         public void SetAimAngle(float val)
         {
             aimAngle = val;
-            OnStateUpdate();
         }
 
         public int GetPlayerType(int player)
@@ -560,6 +562,12 @@ namespace PhysicsEngine
         public event Action<int> On8BallPocketed = _ => { };
         public event Action OnStateUpdate = () => { };
         public event Action OnAim = () => { };
+
+
+        public event Action OnBallHit = () => { };
+        public event Action OnEdgeHit = () => { };
+        public event Action OnPocket = () => { };
+
 
         public Action OnStop = () => { };
 
