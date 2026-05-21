@@ -644,11 +644,20 @@ public class PoolBot
         var fireDir = (cue_shots[0].pot - cueBallPosition).normalized;
 
         var angle = -Vector3.SignedAngle(Vector3.right, fireDir, Vector3.forward);
+        double ang = pool.aimAngle;
+
+        for (int i = 0; i < 218; i++)
+        {
+            var a = ang + (angle - ang) * (i / 218.0);
+
+            pool.SetAimAngle((float)a);
+            pool.SendAim();
+
+            await Task.Delay(16);
+        }
 
         pool.SetAimAngle((float)angle);
         pool.SendAim();
-
-        await Task.Delay(3500);
 
         var power = cue_shots[0].dist / TableWidth;
 
