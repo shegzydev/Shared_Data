@@ -5,10 +5,10 @@ namespace PhysicsEngine
 {
     public class PhysicsParameters
     {
-        public const double SCALE = 1000.0;           // Scale factor (1 unit = 0.001 in real world)
+        public const double SCALE = 1000.0; // Scale factor (1 unit = 0.001 in real world)
         public const int solverIterations = 5;
         public const double restitution = 1.0;
-        public const double friction = 0.998;
+        public const double friction = 0.997;
         public const double tickRate = 500.0;
         public const double tickMs = 1000.0 / tickRate;
         public const double maxTickMS = tickMs * 4;
@@ -116,7 +116,7 @@ namespace PhysicsEngine
 
         public void ApplyFriction()
         {
-            Velocity = Velocity * PhysicsParameters.friction;
+            Velocity = Velocity * (1.0 / (1.0 + PhysicsParameters.dt * PhysicsParameters.friction));
 
             if (Velocity.Magnitude() < PhysicsParameters.minVelocity)
                 Velocity = Vector2.Zero;
@@ -532,7 +532,7 @@ namespace PhysicsEngine
             Vector2 closest = edge.ClosestPoint(hitPoint);
             double distSq = (closest - hitPoint).MagnitudeSquared();
 
-            if (distSq > circle.Radius * circle.Radius)
+            if (distSq >= circle.Radius * circle.Radius)
                 return;
 
             // Move to impact point
@@ -699,7 +699,7 @@ namespace PhysicsEngine
             double minDist = a.Radius + b.Radius;
 
             if (dist >= minDist) return;
-            
+
             if (!PhysicsParameters.circleCollided)
             {
                 onCollision?.Invoke((a, b));

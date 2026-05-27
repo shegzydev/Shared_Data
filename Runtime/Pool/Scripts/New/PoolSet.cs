@@ -153,10 +153,13 @@ namespace PhysicsEngine
             physics.OnBallCollision = data =>
             {
                 if (!acceptCollisions) return;
+
                 if (data.A == cueBall || data.B == cueBall)
                 {
                     firstHit ??= data.A == cueBall ? data.B : data.A;
                 }
+
+                if (data.A.IsPocketed) return;
                 OnBallHit();
             };
 
