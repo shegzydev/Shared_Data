@@ -6,10 +6,10 @@ namespace PhysicsEngine
     public class PhysicsParameters
     {
         public const double SCALE = 1000.0; // Scale factor (1 unit = 0.001 in real world)
-        public const int solverIterations = 5;
+        public const int solverIterations = 20;
         public const double restitution = 1.0;
         public const double friction = 0.997;
-        public const double tickRate = 500.0;
+        public const double tickRate = 60.0;
         public const double tickMs = 1000.0 / tickRate;
         public const double maxTickMS = tickMs * 4;
         public const double dt = tickMs / 1000;
@@ -87,6 +87,32 @@ namespace PhysicsEngine
             return new Vector2(P1.X + t * ex, P1.Y + t * ey);
         }
 
+        public Vector2 ClosestPointUnClamped(Vector2 point)
+        {
+            double ex = P2.X - P1.X;
+            double ey = P2.Y - P1.Y;
+            double lenSq = ex * ex + ey * ey;
+            if (lenSq < 1e-10) return P1;
+
+            double t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
+
+            return new Vector2(P1.X + t * ex, P1.Y + t * ey);
+        }
+
+        public double proj(Vector2 point)
+        {
+            double ex = P2.X - P1.X;
+            double ey = P2.Y - P1.Y;
+
+            double lenSq = ex * ex + ey * ey;
+
+            if (lenSq < 1e-10) return 0;
+
+            double t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
+
+            return t;
+        }
+
         public double DistanceToPoint(Vector2 point)
         {
             Vector2 closest = ClosestPoint(point);
@@ -99,6 +125,7 @@ namespace PhysicsEngine
     public class Circle : PhysicsObj
     {
         public Vector2 Velocity { get; set; } = Vector2.Zero;
+        public Vector2 Accel { get; set; } = Vector2.Zero;
         public Vector2 Center { get; set; } = Vector2.Zero;
         public Vector2 PrevCenter { get; set; } = Vector2.Zero;
         public double Radius { get; set; } = PhysicsParameters.ballRadius;
@@ -114,17 +141,16 @@ namespace PhysicsEngine
             Velocity = Vector2.Zero;
         }
 
-        public void ApplyFriction()
+        public void ApplyFriction(double dt)
         {
-            Velocity = Velocity * (1.0 / (1.0 + PhysicsParameters.dt * PhysicsParameters.friction));
-
+            Velocity = Velocity * (1.0 / (1.0 + dt * PhysicsParameters.friction));
             if (Velocity.Magnitude() < PhysicsParameters.minVelocity)
                 Velocity = Vector2.Zero;
         }
 
         public void ApplyGravity(double Y)
         {
-            Velocity = Velocity + new Vector2(0, Y) * PhysicsParameters.dt;
+            Accel = new Vector2(Accel.X, Y);
         }
 
         public override string ToString() => $"Center=({Center.X:F0}, {Center.Y:F0}), Vel=({Velocity.X:F0}, {Velocity.Y:F0})";
@@ -480,51 +506,107 @@ namespace PhysicsEngine
 
     public class Solver
     {
+        public struct CCDHit
+        {
+            public double TOI;
+            public Vector2 normal;
+            public bool bouncy;
+
+            public PhysicsObj A;
+            public PhysicsObj B;
+            public bool bIsCircle;
+        };
+
         const double EPSILON = 1e-8;
 
         // =========================================================
         // Circle vs Edge CCD
         // =========================================================
-        public void SolveCCD(
-            Circle circle,
-            Edge edge,
-            double dt,
-            Action<(Circle, Edge)> onCollision)
+
+        public bool SolveCCD(Circle circle, Edge edge, double dt, out CCDHit hit)
         {
+            hit = new CCDHit { TOI = dt };
+
+            Vector2 edgeNormal = edge.GetNormal();
+            double startDist = (circle.Center - edge.P1).Dot(edgeNormal);
+            double velAlongNormal = circle.Velocity.Dot(edgeNormal);
+
+            // Not approaching edge
+            if (Math.Abs(velAlongNormal) < EPSILON) return false;
+
+            double t1 = (circle.Radius - startDist) / velAlongNormal;
+            double t2 = (-circle.Radius - startDist) / velAlongNormal;
+
+            var t = Math.Min(t1, t2);
+
+            if (t < 0 || t > dt) return false;
+
+            Vector2 hitPoint = circle.Center + circle.Velocity * t;
+            var proj = edge.proj(hitPoint);
+
+            if (proj < 0 || proj > 1)
+            {
+                //Vertices resolution
+                var vA = SolveCCD(circle, new Circle(edge.P1.X, edge.P1.Y, 0), dt, out var hit1);
+                var vB = SolveCCD(circle, new Circle(edge.P2.X, edge.P2.Y, 0), dt, out var hit2);
+
+                if (!(vA || vB)) return false;
+
+                if (vA && vB)
+                {
+                    hit.normal = hit1.TOI < hit2.TOI ? hit1.normal : hit2.normal;
+                    hit.TOI = Math.Min(hit1.TOI, hit2.TOI);
+                }
+                else if (vA)
+                {
+                    hit.normal = hit1.normal;
+                    hit.TOI = hit1.TOI;
+                }
+                else if (vB)
+                {
+                    hit.normal = hit2.normal;
+                    hit.TOI = hit2.TOI;
+                }
+                hit.normal *= 1;
+            }
+            else
+            {
+                hit.normal = edgeNormal;
+                hit.TOI = t;
+            }
+
+            hit.bouncy = edge.Bouncy;
+            hit.A = circle;
+            hit.B = edge;
+            hit.bIsCircle = false;
+
+            return true;
+        }
+
+        /*
+        public bool SolveCCD(Circle circle, Edge edge, double dt, out CCDHit hit)
+        {
+            hit = new CCDHit { };
+
             Vector2 start = circle.Center;
             Vector2 end = start + circle.Velocity * dt;
 
-            Vector2 edgeDir = edge.P2 - edge.P1;
             Vector2 edgeNormal = edge.GetNormal();
 
             // Signed distances to line
             double startDist = (start - edge.P1).Dot(edgeNormal);
             double endDist = (end - edge.P1).Dot(edgeNormal);
 
-            // Already penetrating fallback
-            if (Math.Abs(startDist) <= circle.Radius)
-            {
-                Solve(circle, edge, onCollision);
-                return;
-            }
-
-            // Did not cross plane
-            if ((startDist > circle.Radius && endDist > circle.Radius) ||
-                (startDist < -circle.Radius && endDist < -circle.Radius))
-            {
-                return;
-            }
-
             double denom = startDist - endDist;
 
             if (Math.Abs(denom) < EPSILON)
-                return;
+                return false;
 
             // TOI
             double t = (startDist - circle.Radius * Math.Sign(startDist)) / denom;
 
             if (t < 0.0 || t > 1.0)
-                return;
+                return false;
 
             Vector2 hitPoint = start + (end - start) * t;
 
@@ -532,57 +614,31 @@ namespace PhysicsEngine
             Vector2 closest = edge.ClosestPoint(hitPoint);
             double distSq = (closest - hitPoint).MagnitudeSquared();
 
-            if (distSq >= circle.Radius * circle.Radius)
-                return;
+            if (distSq > circle.Radius * circle.Radius)
+                return false;
 
-            // Move to impact point
-            circle.Center = hitPoint;
+            Vector2 normal = edge.GetNormal();
+            if (circle.Velocity.Dot(normal) > 0) normal = normal * -1;
 
-            if (!PhysicsParameters.edgeCollided)
-            {
-                onCollision?.Invoke((circle, edge));
-                PhysicsParameters.edgeCollided = true;
-            }
+            hit.normal = normal;
+            hit.TOI = t * dt;
+            hit.bouncy = edge.Bouncy;
+            hit.A = circle;
+            hit.B = edge;
+            hit.bIsCircle = false;
 
-            Vector2 normal = edgeNormal;
-
-            // Ensure normal opposes motion
-            if (circle.Velocity.Dot(normal) > 0)
-                normal = normal * -1;
-            // normal = -normal;
-
-            if (!edge.Bouncy)
-            {
-                var dot = circle.Velocity.Dot(normal);
-                circle.Velocity -= normal * dot;
-                return;
-            }
-
-            double velDot = circle.Velocity.Dot(normal);
-
-            if (velDot < 0)
-            {
-                circle.Velocity =
-                    circle.Velocity -
-                    (1 + PhysicsParameters.restitution) * velDot * normal;
-            }
-
-            // // Advance remaining time
-            double remaining = 1.0 - t;
-            circle.Center += circle.Velocity * (remaining * dt);
+            return true;
         }
-
+        */
         // =========================================================
         // Circle vs Circle CCD
         // =========================================================
-        public void SolveCCD(
-            Circle a,
-            Circle b,
-            double dt,
-            Action<(Circle, Circle)> onCollision)
+        public bool SolveCCD(Circle a, Circle b, double dt, out CCDHit hit)
         {
+            hit = new CCDHit { TOI = dt };
+
             Vector2 relativeStart = b.Center - a.Center;
-            Vector2 relativeVelocity = (b.Velocity - a.Velocity) * dt;
+            Vector2 relativeVelocity = b.Velocity - a.Velocity;
 
             double radius = a.Radius + b.Radius;
 
@@ -590,60 +646,39 @@ namespace PhysicsEngine
             double B = 2.0 * relativeStart.Dot(relativeVelocity);
             double C = relativeStart.Dot(relativeStart) - radius * radius;
 
-            // Already overlapping fallback
-            if (C <= 0)
-            {
-                Solve(a, b, onCollision);
-                return;
-            }
-
             if (A < EPSILON)
-                return;
+                return false;
+
+            if (B >= 0)
+                return false;
 
             double discriminant = B * B - 4 * A * C;
 
             if (discriminant < 0)
-                return;
+                return false;
 
             double sqrt = Math.Sqrt(discriminant);
 
             double t0 = (-B - sqrt) / (2 * A);
 
-            if (t0 < 0.0 || t0 > 1.0)
-                return;
+            if (t0 < 0 || t0 > dt)
+                return false;
 
             // Move to TOI
-            a.Center += a.Velocity * (t0 * dt);
-            b.Center += b.Velocity * (t0 * dt);
+            Vector2 hitA = a.Center + a.Velocity * t0;
+            Vector2 hitB = b.Center + b.Velocity * t0;
 
-            if (!PhysicsParameters.circleCollided)
-            {
-                onCollision?.Invoke((a, b));
-                PhysicsParameters.circleCollided = true;
-            }
+            Vector2 normal = (hitB - hitA).Normalized();
 
-            Vector2 normal = (b.Center - a.Center).Normalized();
+            hit.normal = normal;
+            hit.TOI = t0;
+            hit.bouncy = true;
 
-            Vector2 rv = b.Velocity - a.Velocity;
-            double velAlong = rv.Dot(normal);
+            hit.A = a;
+            hit.B = b;
+            hit.bIsCircle = true;
 
-            if (velAlong > 0)
-                return;
-
-            double e = PhysicsParameters.restitution;
-
-            double impulse = -(1 + e) * velAlong / 2.0;
-
-            Vector2 impulseVec = normal * impulse;
-
-            a.Velocity -= impulseVec;
-            b.Velocity += impulseVec;
-
-            // Advance remaining time
-            double remain = 1.0 - t0;
-
-            a.Center += a.Velocity * (remain * dt);
-            b.Center += b.Velocity * (remain * dt);
+            return true;
         }
 
         // =========================================================
@@ -658,7 +693,7 @@ namespace PhysicsEngine
             double dy = circle.Center.Y - closest.Y;
             double dist = Math.Sqrt(dx * dx + dy * dy);
 
-            if (dist >= circle.Radius) return;
+            if (dist > circle.Radius) return;
 
             if (!PhysicsParameters.edgeCollided)
             {
@@ -698,7 +733,7 @@ namespace PhysicsEngine
             double dist = Math.Sqrt(dx * dx + dy * dy);
             double minDist = a.Radius + b.Radius;
 
-            if (dist >= minDist) return;
+            if (dist > minDist) return;
 
             if (!PhysicsParameters.circleCollided)
             {
@@ -729,6 +764,35 @@ namespace PhysicsEngine
             a.Velocity -= normal * impulse;
             b.Velocity += normal * impulse;
         }
+
+        public bool GetEarliestImpact(List<Circle> circles, List<Edge> edges, double dt, out CCDHit TOIHIt)
+        {
+            TOIHIt = new CCDHit { TOI = dt * 2 };
+
+            for (int i = 0; i < circles.Count; i++)
+            {
+                for (int j = i + 1; j < circles.Count; j++)
+                {
+                    if (SolveCCD(circles[i], circles[j], dt, out var hit) && hit.TOI < TOIHIt.TOI)
+                    {
+                        TOIHIt = hit;
+                    }
+                }
+            }
+
+            foreach (var c in circles)
+            {
+                foreach (var e in edges)
+                {
+                    if (SolveCCD(c, e, dt, out var hit) && hit.TOI < TOIHIt.TOI)
+                    {
+                        TOIHIt = hit;
+                    }
+                }
+            }
+
+            return TOIHIt.TOI <= dt;
+        }
     }
 
     public class PoolPhysics
@@ -752,6 +816,8 @@ namespace PhysicsEngine
         public void AddCircle(Circle c) => circles.Add(c);
         public void AddEdge(Edge e) => edges.Add(e);
         public void AddHole(Circle h) => holes.Add(h);
+
+        public List<Solver.CCDHit> CCDCache = new();
 
         public void Fire()
         {
@@ -782,35 +848,40 @@ namespace PhysicsEngine
             Render(alpha);
         }
 
-
-
         private void FixedTick()
         {
             PhysicsParameters.circleCollided = PhysicsParameters.edgeCollided = false;
 
-            foreach (var c in circles)
-            {
-                if (c.IsPocketed) continue;
-                foreach (var e in edges)
-                    solver.SolveCCD(c, e, PhysicsParameters.dt, OnEdgeCollision);
-            }
+            double timeRemaining = PhysicsParameters.dt;
 
-            for (int i = 0; i < circles.Count; i++)
+            bool hitEarly;
+
+            while (hitEarly = solver.GetEarliestImpact(circles, edges, timeRemaining, out var hit))
             {
-                if (circles[i].IsPocketed) continue;
-                for (int j = i + 1; j < circles.Count; j++)
+                if (hit.TOI > 0)
                 {
-                    if (circles[j].IsPocketed) continue;
-                    solver.SolveCCD(circles[i], circles[j], PhysicsParameters.dt, OnBallCollision);
+                    Integrate(hit.TOI);
+
+                    Resolve(hit);
+
+                    timeRemaining -= hit.TOI;
+                }
+                else
+                {
+                    break;
+                    //Chain Reaction
                 }
             }
 
-            foreach (var c in circles)
-            {
-                c.PrevCenter = c.Center;
-                c.Center = c.Center + c.Velocity * PhysicsParameters.dt;
-            }
+            if(!hitEarly) Integrate(timeRemaining);
 
+            CheckPocketed();
+
+            AddDrag();
+        }
+
+        void RemoveOverlaps()
+        {
             for (int iter = 0; iter < PhysicsParameters.solverIterations; iter++)
             {
                 foreach (var c in circles)
@@ -827,7 +898,54 @@ namespace PhysicsEngine
                     }
                 }
             }
+        }
 
+        void Integrate(double dt)
+        {
+            foreach (var c in circles)
+            {
+                c.PrevCenter = c.Center;
+                c.Center = c.Center + c.Velocity * dt;
+            }
+        }
+
+        void Resolve(Solver.CCDHit hit)
+        {
+            if (hit.bIsCircle)
+            {
+                Circle A = (Circle)hit.A;
+                Circle B = (Circle)hit.B;
+
+                double aDotN = A.Velocity.Dot(hit.normal);
+                double bDotN = B.Velocity.Dot(hit.normal);
+
+                A.Velocity = A.Velocity + (bDotN - aDotN) * hit.normal;
+                B.Velocity = B.Velocity + (aDotN - bDotN) * hit.normal;
+
+                A.Center -= hit.normal * 100;
+                B.Center += hit.normal * 100;
+            }
+            else
+            {
+                Circle A = (Circle)hit.A;
+                Edge B = (Edge)hit.B;
+
+                if (!B.Bouncy)
+                {
+                    var along = A.Velocity.Dot(hit.normal);
+                    A.Velocity = A.Velocity - (hit.normal * along);
+                }
+                else
+                {
+                    A.Velocity = A.Velocity - (2 * A.Velocity.Dot(hit.normal) * hit.normal);
+                }
+
+                A.Center += hit.normal * 100;
+            }
+        }
+
+        void CheckPocketed()
+        {
             foreach (var hole in holes)
             {
                 foreach (var ball in circles)
@@ -846,13 +964,19 @@ namespace PhysicsEngine
                 }
             }
 
+        }
+
+        void AddDrag()
+        {
             bool spinning = false;
+
             foreach (var c in circles)
             {
-                c.ApplyFriction();
-                if (c.IsPocketed) continue;
+                c.Velocity = c.Velocity + c.Accel * PhysicsParameters.dt;
 
-                if (c.Velocity.MagnitudeSquared() > PhysicsParameters.minVelocity * PhysicsParameters.minVelocity)
+                c.ApplyFriction(PhysicsParameters.dt);
+
+                if (!c.IsPocketed & c.Velocity.Magnitude() > PhysicsParameters.minVelocity)
                     spinning = true;
             }
 

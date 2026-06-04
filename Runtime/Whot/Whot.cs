@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 public enum WhotNetEvents : byte
 {
@@ -125,7 +126,8 @@ public class Whot
         cards = CardDeck.CreateDeck();
     }
 
-    public void Init()
+
+    public async void Init()
     {
         initting = true;
 
@@ -153,6 +155,8 @@ public class Whot
                 // OnPickCard?.Invoke((cards[picked], picked, i));
             }
         }
+
+        await Task.Delay(7500);
 
         OnTurnUpdate?.Invoke(turn);
     }
@@ -237,6 +241,14 @@ public class Whot
         hands[player].RemoveAt(handIndex);
         OnPlay?.Invoke((handIndex, player));
 
+        if(HandEmpty())
+        {
+            endGame = true;
+            byte[] count = CountCards(out int winner);
+            OnEndGame?.Invoke(player, count);
+            return true;
+        }
+
         if (hands[player].Count == 2)
         {
             OnPassMessage?.Invoke(3, turn);
@@ -269,13 +281,13 @@ public class Whot
         // }
         else if (cards[card] == 8)
         {
-            if (!NextPlayerHas8())
-            {
-                Skip();
-                OnPassMessage?.Invoke(6, turn);
-            }
-            else
-                NextTurn();
+            // if (!NextPlayerHas8())
+            // {
+            Skip();
+            OnPassMessage?.Invoke(6, turn);
+            // }
+            // else
+            //     NextTurn();
         }
         else if (cards[card] == 14)
         {
@@ -479,16 +491,6 @@ public class Whot
 
         turn++;
         turn %= numplayers;
-
-        /*int safeGuard = numplayers + 1;
-        do
-        {
-            turn++;
-            turn %= numplayers;
-
-            if ((--safeGuard) == 0) break;
-
-        } while (leftPlayers.Contains(turn));*/
 
         ValidateTurnChange();
     }

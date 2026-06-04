@@ -86,6 +86,7 @@ internal class NetworkManager
 
     Dictionary<int, NetworkObject> networkObjects = new();
     ConcurrentQueue<(ActionType eventType, object payload)> actionQueue = new();
+    static ConcurrentQueue<bool> timeOutQueue = new();
 
     internal static CancellationTokenSource cts = new CancellationTokenSource();
 
@@ -125,6 +126,8 @@ internal class NetworkManager
         networkObjects[netObject.OwnerID] = netObject;
     }
 
+    public static Action<bool> TimeOut = (flag) => { timeOutQueue.Enqueue(flag); };
+
     IEnumerator heartbeatRoutine;
     IEnumerator timeoutRoutine;
     public void TryConnect(string url = "", long roomToConnect = -1, long idToBeAssigned = -1)
@@ -140,8 +143,10 @@ internal class NetworkManager
         serverIP = IPS[ServerEnum];
         Client.OnConnected = () =>
         {
+            timeOutQueue.Clear();
+
             timeOut = false;
-            GigNet.OnTimeOut?.Invoke(false);
+            TimeOut?.Invoke(false);
 
             ID = idToBeAssigned;
             GigNet.Log?.Invoke($"I've been assigned with id {ID}");
@@ -280,6 +285,12 @@ internal class NetworkManager
                 default: { break; }
             }
         }
+
+        while (timeOutQueue.TryDequeue(out bool timeOutFlag))
+        {
+            GigNet.OnTimeOut?.Invoke(timeOutFlag);
+            GigNet.Log(timeOutFlag.ToString());
+        }
     }
 
     public void QueueEvent(ActionType eventType, object payload)
@@ -365,15 +376,22 @@ internal class NetworkManager
             else if (elapsed > timeOutInSeconds && !timeOut)
             {
                 timeOut = true;
-                GigNet.OnTimeOut?.Invoke(true);
+                TimeOut?.Invoke(true);
+
                 ((Client)agent).ShutDown();
+
+                GigNet.Log?.Invoke("Connection Timed Out");
             }
             else
             {
-                GigNet.OnTimeOut?.Invoke(false);
+                if (!timeOut)
+                {
+                    TimeOut?.Invoke(false);
+                    GigNet.Log?.Invoke("Connection Timed In");
+                }
             }
 
-            yield return null;
+            yield return new CoroutineRunnner.WaitForSeconds(1);
         }
     }
 #endif

@@ -183,7 +183,7 @@ namespace PhysicsEngine
         void HoleHandler((Circle ball, Circle hole) data)
         {
             data.ball.Center = MetaData.dropPosition;
-            data.ball.Velocity = new Vector2(200000, -200000);
+            data.ball.Velocity = new Vector2(1,0) * data.ball.Velocity.Magnitude();
             data.ball.IsPocketed = true;
 
             if (data.ball == cueBall)
