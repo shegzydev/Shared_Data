@@ -159,7 +159,7 @@ internal class NetworkManager
             timeoutRoutine = CoroutineRunnner.StartCoroutine(WatchTimeOut(5f));
         };
 
-        agent = new Client(rpcRouter, url, port, idToBeAssigned, roomToConnect);
+        agent = new Client(rpcRouter, url, port, idToBeAssigned, roomToConnect, CancellationToken.None);
         stopwatch = Stopwatch.StartNew();
 #endif
     }
@@ -378,7 +378,7 @@ internal class NetworkManager
                 timeOut = true;
                 TimeOut?.Invoke(true);
 
-                ((Client)agent).ShutDown();
+                // ((Client)agent).ShutDown();
 
                 GigNet.Log?.Invoke("Connection Timed Out");
             }

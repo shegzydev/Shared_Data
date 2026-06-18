@@ -9,13 +9,13 @@ internal class Agent
     protected float OutGoingData = 0;
     public long session { get; protected set; }
     public static double receivedHeartbeat { get; set; }
-    public static void ResetHeartBeat() {  }
+    public static void ResetHeartBeat() { }
     public virtual void Tick() { }
     public virtual void FixedTick() { }
     public virtual void SendTCPMessage(byte[] data) { }
     public virtual void SendTCPMessageToRoom(long id, byte[] data) { }
     public virtual void SendUDPMessage(byte[] data) { }
-    public virtual void CleanUp() { }
+    public virtual Task CleanUp() { return Task.CompletedTask; }
     public (float In, float Out) BandWidthUsage()
     {
         var data = (IncomingData / 1000000f, OutGoingData / 1000000f);

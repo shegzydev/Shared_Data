@@ -56,8 +56,9 @@ public class PlayerData
     {
         if (!active) return;
 
+#if SERVER
         pingTimer += Time.deltaTime;
-
+#endif
         if (!lostConnectionTriggered && pingTimer >= 5f)
         {
             lostConnectionTriggered = true;
@@ -139,7 +140,9 @@ public class Room
 
         if (!isClosed)
         {
+#if SERVER
             startTime += Time.deltaTime;
+#endif
             if (startTime >= 30)
             {
                 // isClosed = true;

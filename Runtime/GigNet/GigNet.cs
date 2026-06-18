@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Threading;
+
 
 #if BLAZOR
 using System.Text.Json.Serialization;
@@ -102,36 +104,37 @@ public class GigNet
     public static string Alias;
     public static string Status;
 
-    public static int IDInRoom
-    {
-        get
-        {
-            try
-            {
-                return NetworkManager.Instance.IDInRoom;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-    }
+    public static int IDInRoom;
+    public static long RoomID;
 
 
 #if CLIENT
     public static int ping;
 
+    internal static int port;
+    internal static string gameName;
+    internal static Agent client;
+
     public static Action<bool> OnTimeOut;
     public static Action OnForceQuit;
     public static Action<List<(string name, string avatar)>> OnRoomFilled;
-    public static void Init(string gameName, int port)
+
+    static CancellationTokenSource cts;
+
+    public static void Init(string _gameName, int _port)
     {
-        NetworkManager.Init(gameName, port, false);
+        gameName = _gameName;
+        port = _port;
     }
-    public static void Connect(string url = "", long roomToConnect = -1, long idToBeAssigned = -1)
+    public static void Connect(string url, long roomToConnect, long idToBeAssigned)
     {
-        NetworkManager.Instance.TryConnect(url, roomToConnect, idToBeAssigned);
+#if CLIENT
+        Log($"Connecting with {idToBeAssigned} to room {roomToConnect}");
+        cts = new CancellationTokenSource();
+        client = new Client(null, url, port, idToBeAssigned, roomToConnect, cts.Token);
+#endif
     }
+
 #elif SERVER
     public static void Init(int port, GameAgent_Server agent)
     {
@@ -146,7 +149,9 @@ public class GigNet
 
     public static void Disconnect(Action OnDisconnect)
     {
-        NetworkManager.Instance.TryDisconnect(OnDisconnect);
+        cts?.Cancel();
+        client?.CleanUp();
+        OnDisconnect?.Invoke();
     }
 
     public static void JoinRoom(int ID)
@@ -184,7 +189,13 @@ public class GigNet
 #if CLIENT
     public static void RaiseEvent(byte id, byte[] args)
     {
-        NetworkManager.Instance.RaiseNetworkEvent(id, args);
+        // NetworkManager.Instance.RaiseNetworkEvent(id, args);
+
+        var payload = Util.MergeArrays(BitConverter.GetBytes((int)PackType.NetEvent), new byte[0], new byte[1] { id }, args);
+        var length = payload.Length;
+        var finalPayload = Util.MergeArrays(BitConverter.GetBytes(length), payload);
+
+        client?.SendTCPMessage(finalPayload);
     }
 #elif SERVER
     public static void RaiseEvent(byte id, byte[] args, long room)
@@ -195,12 +206,14 @@ public class GigNet
 
     public static void Tick()
     {
-        NetworkManager.Instance.Update();
+        // NetworkManager.Instance.Update();
+        client?.Tick();
     }
 
     public static void FixedTick()
     {
-        NetworkManager.Instance.FixedUpdate();
+        // NetworkManager.Instance.FixedUpdate();
+        client?.FixedTick();
     }
 
     static HashSet<long> retryErrors = new() { 429, 500, 502, 503, 504, 429, 408, 0, 409 };
