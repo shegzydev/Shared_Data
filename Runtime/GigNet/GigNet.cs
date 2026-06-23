@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Text;
 using System.Threading;
 
 
@@ -106,6 +107,9 @@ public class GigNet
 
     public static int IDInRoom;
     public static long RoomID;
+
+    public static string errors = "";
+    public static string user = "";
 
 
 #if CLIENT

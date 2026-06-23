@@ -13,6 +13,8 @@ using System.Collections.Generic;
 using System.Text;
 using SimpleJSON;
 using UnityEngine.UIElements;
+using System.Text.Json;
+using UnityEngine;
 
 internal class Client : Agent
 {
@@ -92,6 +94,8 @@ internal class Client : Agent
 
         Task.Run(() => StartClientWSConnection(serverIP, port, userId, roomId));
     }
+
+    public static readonly HttpClient errorClient = new();
 
     async Task StartClientWSConnection(string host, int port, long userId, long roomId)
     {
@@ -182,6 +186,8 @@ internal class Client : Agent
             catch (Exception ex)
             {
                 GigNet.LogError?.Invoke($"Exception: {ex} \n {ex.Message} \n {ex.InnerException} \n {ex.StackTrace}");
+                _ = LogError(ex);
+                GigNet.errors += $"{ex.Message}\n\n";
             }
             finally
             {
@@ -274,6 +280,9 @@ internal class Client : Agent
             }
             catch (Exception e)
             {
+                GigNet.errors += $"{e.Message}\n\n";
+                _ = LogError(e);
+
                 GigNet.LogError(e.Message + ":" + e.StackTrace);
 
                 if (e.Message.Contains("chunk") || e.Message.Contains("Expecting"))
@@ -364,6 +373,38 @@ internal class Client : Agent
                     GigNet.LogError?.Invoke("Error sending packet: " + e.Message);
                 }
             }
+        }
+    }
+
+    async Task LogError(Exception e, int retries = 5)
+    {
+        if (retries <= 0) return;
+
+        try
+        {
+            var payload = JsonSerializer.Serialize(new
+            {
+                username = GigNet.user,
+                message = e.Message,
+                errorCode = (e as WebSocketException)?.WebSocketErrorCode.ToString(),
+                innerException = e.InnerException?.Message,
+                innerInner = e.InnerException?.InnerException?.Message,
+                timestamp = DateTime.UtcNow,
+            });
+
+            var response = await errorClient.PostAsync(
+                $"https://gameserver.skyboardgames.com/{GigNet.gameName}_server/log-error",
+                new StringContent(payload, Encoding.UTF8, "application/json")
+            );
+
+            var msg = await response.Content.ReadAsStringAsync();
+
+            GigNet.Log("Sent error log" + msg);
+        }
+        catch (Exception ex)
+        {
+            GigNet.LogError("Error_Sending_Logs " + ex.Message);
+            await LogError(e, retries - 1);
         }
     }
 
