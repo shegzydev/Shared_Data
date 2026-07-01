@@ -2,10 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 
 public enum LudoNetEvent : byte
 {
-    TurnSwitch, Choose, Play, StateUpdate, Roll, EndGame, Timer
+    TurnSwitch, Choose, Play, StateUpdate, Roll, EndGame, Timer, Spin
 }
 
 public enum color : short
@@ -154,8 +155,12 @@ public class LudoObject
     short[] dice = new short[3];
     short chosen = -1;
     bool doubleSix = false;
-    public void Roll()
+    public async void Roll()
     {
+        timer = 20;
+
+        await Task.Delay(500);
+
         dice[0] = (short)rand.Next(1, 7);
         dice[1] = (short)rand.Next(1, 7);
 
@@ -164,8 +169,6 @@ public class LudoObject
         doubleSix = dice[2] == 12;
 
         OnRollDice?.Invoke(dice);
-
-        timer = 20;
 
         if (!MoveAvailableOnRoll()) SkipTurn();
     }
