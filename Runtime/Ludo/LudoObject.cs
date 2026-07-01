@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 public enum LudoNetEvent : byte
 {
-    TurnSwitch, Choose, Play, StateUpdate, Roll, EndGame, Timer, Spin
+    TurnSwitch, Choose, Play, StateUpdate, Roll, EndGame, Timer, Spin, Ready
 }
 
 public enum color : short
@@ -116,6 +116,7 @@ public class LudoObject
     public Action<(short pieceIndex, short start, short end, short steps)> OnPlay;
     public Action<short> OnTurnsSwitch;
     public Action<byte[]> OnStateUpdate;
+    public Action OnReady;
     public Action<short[]> OnRollDice;
 
     public Action<short> OnEndGame;
@@ -132,14 +133,14 @@ public class LudoObject
     public LudoObject(short numPlayers)
     {
         this.numPlayers = numPlayers;
-        Reset();
     }
 
     public void Init()
     {
+        Reset();
+        OnReady?.Invoke();
         OnTurnsSwitch?.Invoke(turn);
         OnStateUpdate?.Invoke(BitConverter.GetBytes((short)0).Concat(GetState()).ToArray());
-        // OnStateUpdate?.Invoke(GetState());
     }
 
     public void Reset()
