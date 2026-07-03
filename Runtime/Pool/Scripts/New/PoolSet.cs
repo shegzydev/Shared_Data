@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using FixedMath;
 
 public enum PoolNetEvents : byte
 {
@@ -183,7 +184,7 @@ namespace PhysicsEngine
         void HoleHandler((Circle ball, Circle hole) data)
         {
             data.ball.Center = MetaData.dropPosition;
-            data.ball.Velocity = new Vector2(1,0) * data.ball.Velocity.Magnitude();
+            data.ball.Velocity = new Vector2Fixed(1, 0) * data.ball.Velocity.Length();
             data.ball.IsPocketed = true;
 
             if (data.ball == cueBall)
@@ -433,7 +434,7 @@ namespace PhysicsEngine
             {
                 balls[i].Center = MetaData.rack[i];
                 balls[i].PrevCenter = balls[i].Center;
-                balls[i].Velocity = Vector2.Zero;
+                balls[i].Velocity = Vector2Fixed.Zero;
                 balls[i].IsPocketed = false;
             }
 
@@ -459,11 +460,11 @@ namespace PhysicsEngine
             switch (rule)
             {
                 case BallInHandRule.BehindHeadstring:
-                    cueBall.Center = new Vector2(MetaData.headStringX, MetaData.cueBallStart.Y);
+                    cueBall.Center = new Vector2Fixed(MetaData.headStringX, MetaData.cueBallStart.Y);
                     break;
 
                 case BallInHandRule.Anywhere:
-                    cueBall.Center = Vector2.Zero;
+                    cueBall.Center = Vector2Fixed.Zero;
                     break;
 
                 case BallInHandRule.None:
@@ -473,7 +474,7 @@ namespace PhysicsEngine
             }
 
             cueBall.PrevCenter = cueBall.Center;
-            cueBall.Velocity = Vector2.Zero;
+            cueBall.Velocity = Vector2Fixed.Zero;
             cueBall.IsPocketed = false;
             if (potted.Contains(cueBall)) potted.Remove(cueBall);
         }
@@ -498,7 +499,7 @@ namespace PhysicsEngine
             physics.Tick();
         }
 
-        public void Fire(Vector2 velocity)
+        public void Fire(Vector2Fixed velocity)
         {
             cueBall.Velocity = velocity;
             cueBall.IsPocketed = false;
@@ -558,7 +559,7 @@ namespace PhysicsEngine
         public event Action<int> OnTurnChanged = _ => { };
         public event Action<int> OnScratch = _ => { };
         public event Action<int> OnFoul = _ => { };
-        public event Action<(int turn, double X, double Y)> OnFire = _ => { };
+        public event Action<(int turn, Fixed64 X, Fixed64 Y)> OnFire = _ => { };
         public event Action<(int player, int group)> OnAssign = _ => { };
         public event Action<int> OnBreak = _ => { };
         public event Action OnReRack = () => { };
@@ -597,21 +598,21 @@ namespace PhysicsEngine
 
                 for (int i = 0; i < balls.Count; i++)
                 {
-                    writer.Write(balls[i].Center.X);
-                    writer.Write(balls[i].Center.Y);
-                    writer.Write(balls[i].PrevCenter.X);
-                    writer.Write(balls[i].PrevCenter.Y);
-                    writer.Write(balls[i].Velocity.X);
-                    writer.Write(balls[i].Velocity.Y);
+                    writer.Write(balls[i].Center.X.ToDouble());
+                    writer.Write(balls[i].Center.Y.ToDouble());
+                    writer.Write(balls[i].PrevCenter.X.ToDouble());
+                    writer.Write(balls[i].PrevCenter.Y.ToDouble());
+                    writer.Write(balls[i].Velocity.X.ToDouble());
+                    writer.Write(balls[i].Velocity.Y.ToDouble());
                     writer.Write(balls[i].IsPocketed);
                 }
 
-                writer.Write(cueBall.Center.X);
-                writer.Write(cueBall.Center.Y);
-                writer.Write(cueBall.PrevCenter.X);
-                writer.Write(cueBall.PrevCenter.Y);
-                writer.Write(cueBall.Velocity.X);
-                writer.Write(cueBall.Velocity.Y);
+                writer.Write(cueBall.Center.X.ToDouble());
+                writer.Write(cueBall.Center.Y.ToDouble());
+                writer.Write(cueBall.PrevCenter.X.ToDouble());
+                writer.Write(cueBall.PrevCenter.Y.ToDouble());
+                writer.Write(cueBall.Velocity.X.ToDouble());
+                writer.Write(cueBall.Velocity.Y.ToDouble());
                 writer.Write(cueBall.IsPocketed);
 
                 for (int i = 0; i < 2; i++)
@@ -658,17 +659,17 @@ namespace PhysicsEngine
                 potted.Clear();
                 for (int i = 0; i < balls.Count; i++)
                 {
-                    balls[i].Center = new Vector2(reader.ReadDouble(), reader.ReadDouble());
-                    balls[i].PrevCenter = new Vector2(reader.ReadDouble(), reader.ReadDouble());
-                    balls[i].Velocity = new Vector2(reader.ReadDouble(), reader.ReadDouble());
+                    balls[i].Center = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
+                    balls[i].PrevCenter = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
+                    balls[i].Velocity = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
                     balls[i].IsPocketed = reader.ReadBoolean();
 
                     if (balls[i].IsPocketed) { potted.Add(balls[i]); }
                 }
 
-                cueBall.Center = new Vector2(reader.ReadDouble(), reader.ReadDouble());
-                cueBall.PrevCenter = new Vector2(reader.ReadDouble(), reader.ReadDouble());
-                cueBall.Velocity = new Vector2(reader.ReadDouble(), reader.ReadDouble());
+                cueBall.Center = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
+                cueBall.PrevCenter = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
+                cueBall.Velocity = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
                 cueBall.IsPocketed = reader.ReadBoolean();
 
                 if (cueBall.IsPocketed) { potted.Add(cueBall); }

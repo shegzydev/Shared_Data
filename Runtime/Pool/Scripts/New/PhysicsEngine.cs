@@ -1,20 +1,21 @@
 using System;
 using System.Collections.Generic;
+using FixedMath;
 
 namespace PhysicsEngine
 {
     public class PhysicsParameters
     {
-        public const double SCALE = 1000.0; // Scale factor (1 unit = 0.001 in real world)
-        public const int solverIterations = 20;
-        public const double restitution = 1.0;
-        public const double friction = 0.997;
-        public const double tickRate = 60.0;
-        public const double tickMs = 1000.0 / tickRate;
-        public const double maxTickMS = tickMs * 4;
-        public const double dt = tickMs / 1000;
-        public const double minVelocity = 300.0;       // 0.01 * SCALE
-        public const double ballRadius = 2925.0;      // 2.925 * 1000
+        public static readonly Fixed64 SCALE = Fixed64.FromDouble(1000.0); // Scale factor (1 unit = 0.001 in real world)
+        public static readonly int solverIterations = 20;
+        public static readonly Fixed64 restitution = Fixed64.FromDouble(1.0);
+        public static readonly Fixed64 friction = Fixed64.FromDouble(0.997);
+        public static readonly Fixed64 tickRate = Fixed64.FromDouble(60.0);
+        public static readonly Fixed64 tickMs = Fixed64.FromDouble(1000.0) / tickRate;
+        public static readonly Fixed64 maxTickMS = tickMs * 4;
+        public static readonly Fixed64 dt = tickMs / 1000;
+        public static readonly Fixed64 minVelocity = Fixed64.FromDouble(300.0);       // 0.01 * SCALE
+        public static readonly Fixed64 ballRadius = Fixed64.FromDouble(2925.0);      // 2.925 * 1000
 
         public static bool circleCollided, edgeCollided = false;
     }
@@ -24,7 +25,7 @@ namespace PhysicsEngine
         public static Action<object> Log = _ => { };
     }
 
-    public struct Vector2
+    /*public struct Vector2
     {
         public double X { get; set; }
         public double Y { get; set; }
@@ -52,9 +53,12 @@ namespace PhysicsEngine
 
         public override string ToString() => $"({X:F0}, {Y:F0})";
 
-        // Convert to real-world units (divide by SCALE)
-        public Vector2 ToReal() => new Vector2(X / PhysicsParameters.SCALE, Y / PhysicsParameters.SCALE);
-    }
+        public static Vector2 FromFixed(Vector2Fixed v) => new Vector2(v.X.ToDouble(), v.Y.ToDouble());
+        public static Vector2Fixed ToFixed(Vector2 v) => new Vector2Fixed(Fixed64.FromDouble(v.X), Fixed64.FromDouble(v.Y));
+
+        public static implicit operator Vector2(Vector2Fixed v) => FromFixed(v);
+        public static implicit operator Vector2Fixed(Vector2 v) => ToFixed(v);
+    }*/
 
     public class PhysicsObj
     {
@@ -63,94 +67,101 @@ namespace PhysicsEngine
 
     public class Edge : PhysicsObj
     {
-        public Vector2 P1 { get; set; }
-        public Vector2 P2 { get; set; }
+        public Vector2Fixed P1 { get; set; }
+        public Vector2Fixed P2 { get; set; }
         public bool Bouncy { get; set; } = true;
 
-        public Vector2 GetNormal()
+        public Vector2Fixed GetNormal()
         {
-            double nx = -(P2.Y - P1.Y);
-            double ny = P2.X - P1.X;
-            return new Vector2(nx, ny).Normalized();
+            Fixed64 nx = -(P2.Y - P1.Y);
+            Fixed64 ny = P2.X - P1.X;
+            return new Vector2Fixed(nx, ny).Normalized();
         }
 
-        public Vector2 ClosestPoint(Vector2 point)
+        public Vector2Fixed ClosestPoint(Vector2Fixed point)
         {
-            double ex = P2.X - P1.X;
-            double ey = P2.Y - P1.Y;
-            double lenSq = ex * ex + ey * ey;
-            if (lenSq < 1e-10) return P1;
+            Fixed64 ex = P2.X - P1.X;
+            Fixed64 ey = P2.Y - P1.Y;
+            Fixed64 lenSq = ex * ex + ey * ey;
+            if (lenSq < Fixed64.FromDouble(1e-10)) return P1;
 
-            double t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
-            t = Math.Max(0, Math.Min(1, t));
+            Fixed64 t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
+            t = FixedMathUtil.Max(Fixed64.Zero, FixedMathUtil.Min(Fixed64.One, t));
 
-            return new Vector2(P1.X + t * ex, P1.Y + t * ey);
+            return new Vector2Fixed(P1.X + t * ex, P1.Y + t * ey);
         }
 
-        public Vector2 ClosestPointUnClamped(Vector2 point)
+        public Vector2Fixed ClosestPointUnClamped(Vector2Fixed point)
         {
-            double ex = P2.X - P1.X;
-            double ey = P2.Y - P1.Y;
-            double lenSq = ex * ex + ey * ey;
-            if (lenSq < 1e-10) return P1;
+            Fixed64 ex = P2.X - P1.X;
+            Fixed64 ey = P2.Y - P1.Y;
+            Fixed64 lenSq = ex * ex + ey * ey;
+            if (lenSq < Fixed64.FromDouble(1e-10)) return P1;
 
-            double t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
+            Fixed64 t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
 
-            return new Vector2(P1.X + t * ex, P1.Y + t * ey);
+            return new Vector2Fixed(P1.X + t * ex, P1.Y + t * ey);
         }
 
-        public double proj(Vector2 point)
+        public Fixed64 proj(Vector2Fixed point)
         {
-            double ex = P2.X - P1.X;
-            double ey = P2.Y - P1.Y;
+            Fixed64 ex = P2.X - P1.X;
+            Fixed64 ey = P2.Y - P1.Y;
 
-            double lenSq = ex * ex + ey * ey;
+            Fixed64 lenSq = ex * ex + ey * ey;
 
-            if (lenSq < 1e-10) return 0;
+            if (lenSq < Fixed64.FromDouble(1e-10)) return 0;
 
-            double t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
+            Fixed64 t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
 
             return t;
         }
 
-        public double DistanceToPoint(Vector2 point)
+        public Fixed64 DistanceToPoint(Vector2Fixed point)
         {
-            Vector2 closest = ClosestPoint(point);
-            double dx = point.X - closest.X;
-            double dy = point.Y - closest.Y;
-            return Math.Sqrt(dx * dx + dy * dy);
+            Vector2Fixed closest = ClosestPoint(point);
+            Fixed64 dx = point.X - closest.X;
+            Fixed64 dy = point.Y - closest.Y;
+            return Fixed64.Sqrt(dx * dx + dy * dy);
         }
     }
 
     public class Circle : PhysicsObj
     {
-        public Vector2 Velocity { get; set; } = Vector2.Zero;
-        public Vector2 Accel { get; set; } = Vector2.Zero;
-        public Vector2 Center { get; set; } = Vector2.Zero;
-        public Vector2 PrevCenter { get; set; } = Vector2.Zero;
-        public double Radius { get; set; } = PhysicsParameters.ballRadius;
+        public Vector2Fixed Velocity { get; set; } = Vector2Fixed.Zero;
+        public Vector2Fixed Accel { get; set; } = Vector2Fixed.Zero;
+        public Vector2Fixed Center { get; set; } = Vector2Fixed.Zero;
+        public Vector2Fixed PrevCenter { get; set; } = Vector2Fixed.Zero;
+        public Fixed64 Radius { get; set; } = PhysicsParameters.ballRadius;
         public bool IsPocketed { get; set; } = false;
 
         public Circle() { }
 
         public Circle(double x, double y, double radius = -1)
         {
-            Center = new Vector2(x, y);
+            Center = new Vector2Fixed(Fixed64.FromDouble(x), Fixed64.FromDouble(y));
             PrevCenter = Center;
-            Radius = radius > 0 ? radius : PhysicsParameters.ballRadius;
-            Velocity = Vector2.Zero;
+            Radius = radius > 0 ? Fixed64.FromDouble(radius) : PhysicsParameters.ballRadius;
+            Velocity = Vector2Fixed.Zero;
         }
 
-        public void ApplyFriction(double dt)
+        public Circle(Fixed64 x, Fixed64 y, Fixed64 radius = default)
         {
-            Velocity = Velocity * (1.0 / (1.0 + dt * PhysicsParameters.friction));
-            if (Velocity.Magnitude() < PhysicsParameters.minVelocity)
-                Velocity = Vector2.Zero;
+            Center = new Vector2Fixed(x, y);
+            PrevCenter = Center;
+            Radius = radius > Fixed64.Zero ? radius : PhysicsParameters.ballRadius;
+            Velocity = Vector2Fixed.Zero;
         }
 
-        public void ApplyGravity(double Y)
+        public void ApplyFriction(Fixed64 dt)
         {
-            Accel = new Vector2(Accel.X, Y);
+            Velocity = Velocity * (Fixed64.One / (Fixed64.One + dt * PhysicsParameters.friction));
+            if (Velocity.Length() < PhysicsParameters.minVelocity) Velocity = Vector2Fixed.Zero;
+        }
+
+        public void ApplyGravity(Fixed64 Y)
+        {
+            Accel = new Vector2Fixed(Accel.X, Y);
         }
 
         public override string ToString() => $"Center=({Center.X:F0}, {Center.Y:F0}), Vel=({Velocity.X:F0}, {Velocity.Y:F0})";
@@ -508,8 +519,8 @@ namespace PhysicsEngine
     {
         public struct CCDHit
         {
-            public double TOI;
-            public Vector2 normal;
+            public Fixed64 TOI;
+            public Vector2Fixed normal;
             public bool bouncy;
 
             public PhysicsObj A;
@@ -523,39 +534,39 @@ namespace PhysicsEngine
         // Circle vs Edge CCD
         // =========================================================
 
-        public bool SolveCCD(Circle circle, Edge edge, double dt, out CCDHit hit)
+        public bool SolveCCD(Circle circle, Edge edge, Fixed64 dt, out CCDHit hit)
         {
             hit = new CCDHit { TOI = dt };
 
-            Vector2 edgeNormal = edge.GetNormal();
-            double startDist = (circle.Center - edge.P1).Dot(edgeNormal);
-            double velAlongNormal = circle.Velocity.Dot(edgeNormal);
+            Vector2Fixed edgeNormal = edge.GetNormal();
+            Fixed64 startDist = Vector2Fixed.Dot((circle.Center - edge.P1), edgeNormal);
+            Fixed64 velAlongNormal = Vector2Fixed.Dot(circle.Velocity, edgeNormal);
 
             // Not approaching edge
-            if (Math.Abs(velAlongNormal) < EPSILON) return false;
+            if (FixedMathUtil.Abs(velAlongNormal) < Fixed64.Epsilon) return false;
 
-            double t1 = (circle.Radius - startDist) / velAlongNormal;
-            double t2 = (-circle.Radius - startDist) / velAlongNormal;
+            Fixed64 t1 = (circle.Radius - startDist) / velAlongNormal;
+            Fixed64 t2 = (-circle.Radius - startDist) / velAlongNormal;
 
-            var t = Math.Min(t1, t2);
+            var t = FixedMathUtil.Min(t1, t2);
 
-            if (t < 0 || t > dt) return false;
+            if (t < Fixed64.Zero || t > dt) return false;
 
-            Vector2 hitPoint = circle.Center + circle.Velocity * t;
+            Vector2Fixed hitPoint = circle.Center + circle.Velocity * t;
             var proj = edge.proj(hitPoint);
 
-            if (proj < 0 || proj > 1)
+            if (proj < Fixed64.Zero || proj > Fixed64.One)
             {
                 //Vertices resolution
-                var vA = SolveCCD(circle, new Circle(edge.P1.X, edge.P1.Y, 0), dt, out var hit1);
-                var vB = SolveCCD(circle, new Circle(edge.P2.X, edge.P2.Y, 0), dt, out var hit2);
+                var vA = SolveCCD(circle, new Circle(edge.P1.X, edge.P1.Y, Fixed64.Zero), dt, out var hit1);
+                var vB = SolveCCD(circle, new Circle(edge.P2.X, edge.P2.Y, Fixed64.Zero), dt, out var hit2);
 
                 if (!(vA || vB)) return false;
 
                 if (vA && vB)
                 {
                     hit.normal = hit1.TOI < hit2.TOI ? hit1.normal : hit2.normal;
-                    hit.TOI = Math.Min(hit1.TOI, hit2.TOI);
+                    hit.TOI = FixedMathUtil.Min(hit1.TOI, hit2.TOI);
                 }
                 else if (vA)
                 {
@@ -633,42 +644,42 @@ namespace PhysicsEngine
         // =========================================================
         // Circle vs Circle CCD
         // =========================================================
-        public bool SolveCCD(Circle a, Circle b, double dt, out CCDHit hit)
+        public bool SolveCCD(Circle a, Circle b, Fixed64 dt, out CCDHit hit)
         {
             hit = new CCDHit { TOI = dt };
 
-            Vector2 relativeStart = b.Center - a.Center;
-            Vector2 relativeVelocity = b.Velocity - a.Velocity;
+            Vector2Fixed relativeStart = b.Center - a.Center;
+            Vector2Fixed relativeVelocity = b.Velocity - a.Velocity;
 
-            double radius = a.Radius + b.Radius;
+            Fixed64 radius = a.Radius + b.Radius;
 
-            double A = relativeVelocity.Dot(relativeVelocity);
-            double B = 2.0 * relativeStart.Dot(relativeVelocity);
-            double C = relativeStart.Dot(relativeStart) - radius * radius;
+            Fixed64 A = Vector2Fixed.Dot(relativeVelocity, relativeVelocity);
+            Fixed64 B = Fixed64.FromDouble(2.0) * Vector2Fixed.Dot(relativeStart, relativeVelocity);
+            Fixed64 C = Vector2Fixed.Dot(relativeStart, relativeStart) - radius * radius;
 
-            if (A < EPSILON)
+            if (A < Fixed64.Epsilon)
                 return false;
 
-            if (B >= 0)
+            if (B >= Fixed64.Zero)
                 return false;
 
-            double discriminant = B * B - 4 * A * C;
+            Fixed64 discriminant = B * B - 4 * A * C;
 
-            if (discriminant < 0)
+            if (discriminant < Fixed64.Zero)
                 return false;
 
-            double sqrt = Math.Sqrt(discriminant);
+            Fixed64 sqrt = Fixed64.Sqrt(discriminant);
 
-            double t0 = (-B - sqrt) / (2 * A);
+            Fixed64 t0 = (-B - sqrt) / (2 * A);
 
-            if (t0 < 0 || t0 > dt)
+            if (t0 < Fixed64.Zero || t0 > dt)
                 return false;
 
             // Move to TOI
-            Vector2 hitA = a.Center + a.Velocity * t0;
-            Vector2 hitB = b.Center + b.Velocity * t0;
+            Vector2Fixed hitA = a.Center + a.Velocity * t0;
+            Vector2Fixed hitB = b.Center + b.Velocity * t0;
 
-            Vector2 normal = (hitB - hitA).Normalized();
+            Vector2Fixed normal = (hitB - hitA).Normalized();
 
             hit.normal = normal;
             hit.TOI = t0;
@@ -687,11 +698,11 @@ namespace PhysicsEngine
 
         public void Solve(Circle circle, Edge edge, Action<(Circle, Edge)> onCollision)
         {
-            Vector2 closest = edge.ClosestPoint(circle.Center);
+            Vector2Fixed closest = edge.ClosestPoint(circle.Center);
 
-            double dx = circle.Center.X - closest.X;
-            double dy = circle.Center.Y - closest.Y;
-            double dist = Math.Sqrt(dx * dx + dy * dy);
+            Fixed64 dx = circle.Center.X - closest.X;
+            Fixed64 dy = circle.Center.Y - closest.Y;
+            Fixed64 dist = Fixed64.Sqrt(dx * dx + dy * dy);
 
             if (dist > circle.Radius) return;
 
@@ -701,23 +712,23 @@ namespace PhysicsEngine
                 PhysicsParameters.edgeCollided = true;
             }
 
-            Vector2 normal;
-            if (dist < EPSILON)
+            Vector2Fixed normal;
+            if (dist < Fixed64.Epsilon)
                 normal = edge.GetNormal();
             else
-                normal = new Vector2(dx / dist, dy / dist);
+                normal = new Vector2Fixed(dx / dist, dy / dist);
 
-            double overlap = circle.Radius - dist;
+            Fixed64 overlap = circle.Radius - dist;
             circle.Center = circle.Center + normal * overlap;
 
             if (!edge.Bouncy)
             {
-                var dot = circle.Velocity.Dot(normal);
+                var dot = Vector2Fixed.Dot(circle.Velocity, normal);
                 circle.Velocity -= normal * dot;
                 return;
             }
 
-            double velDotNormal = circle.Velocity.Dot(normal);
+            Fixed64 velDotNormal = Vector2Fixed.Dot(circle.Velocity, normal);
             if (velDotNormal > 0) return;
 
             circle.Velocity =
@@ -728,10 +739,10 @@ namespace PhysicsEngine
 
         public void Solve(Circle a, Circle b, Action<(Circle, Circle)> onCollision)
         {
-            double dx = b.Center.X - a.Center.X;
-            double dy = b.Center.Y - a.Center.Y;
-            double dist = Math.Sqrt(dx * dx + dy * dy);
-            double minDist = a.Radius + b.Radius;
+            Fixed64 dx = b.Center.X - a.Center.X;
+            Fixed64 dy = b.Center.Y - a.Center.Y;
+            Fixed64 dist = Fixed64.Sqrt(dx * dx + dy * dy);
+            Fixed64 minDist = a.Radius + b.Radius;
 
             if (dist > minDist) return;
 
@@ -741,31 +752,31 @@ namespace PhysicsEngine
                 PhysicsParameters.circleCollided = true;
             }
 
-            Vector2 normal;
-            if (dist < EPSILON)
-                normal = new Vector2(1, 0);
+            Vector2Fixed normal;
+            if (dist < Fixed64.Epsilon)
+                normal = new Vector2Fixed(1, 0);
             else
-                normal = new Vector2(dx / dist, dy / dist);
+                normal = new Vector2Fixed(dx / dist, dy / dist);
 
-            double overlap = minDist - dist;
-            Vector2 correction = normal * (overlap * 0.5);
+            Fixed64 overlap = minDist - dist;
+            Vector2Fixed correction = normal * (overlap * Fixed64.FromDouble(0.5));
 
             a.Center -= correction;
             b.Center += correction;
 
-            Vector2 rv = b.Velocity - a.Velocity;
-            double velAlong = rv.Dot(normal);
+            Vector2Fixed rv = b.Velocity - a.Velocity;
+            Fixed64 velAlong = Vector2Fixed.Dot(rv, normal);
 
             if (velAlong > 0) return;
 
-            double e = PhysicsParameters.restitution;
-            double impulse = -(1 + e) * velAlong / 2.0;
+            Fixed64 e = PhysicsParameters.restitution;
+            Fixed64 impulse = -(1 + e) * velAlong / Fixed64.FromDouble(2.0);
 
             a.Velocity -= normal * impulse;
             b.Velocity += normal * impulse;
         }
 
-        public bool GetEarliestImpact(List<Circle> circles, List<Edge> edges, double dt, out CCDHit TOIHIt)
+        public bool GetEarliestImpact(List<Circle> circles, List<Edge> edges, Fixed64 dt, out CCDHit TOIHIt)
         {
             TOIHIt = new CCDHit { TOI = dt * 2 };
 
@@ -838,13 +849,13 @@ namespace PhysicsEngine
             lastTime = now;
             accumulator += elapsed;
 
-            while (accumulator >= PhysicsParameters.tickMs)
+            while (accumulator >= PhysicsParameters.tickMs.ToDouble())
             {
                 FixedTick();
-                accumulator -= PhysicsParameters.tickMs;
+                accumulator -= PhysicsParameters.tickMs.ToDouble();
             }
 
-            float alpha = (float)(accumulator / PhysicsParameters.tickMs);
+            float alpha = (float)(accumulator / PhysicsParameters.tickMs.ToDouble());
             Render(alpha);
         }
 
@@ -852,13 +863,13 @@ namespace PhysicsEngine
         {
             PhysicsParameters.circleCollided = PhysicsParameters.edgeCollided = false;
 
-            double timeRemaining = PhysicsParameters.dt;
+            Fixed64 timeRemaining = PhysicsParameters.dt;
 
             bool hitEarly;
 
             while (hitEarly = solver.GetEarliestImpact(circles, edges, timeRemaining, out var hit))
             {
-                if (hit.TOI > 0)
+                if (hit.TOI > Fixed64.Zero)
                 {
                     Integrate(hit.TOI);
 
@@ -873,7 +884,7 @@ namespace PhysicsEngine
                 }
             }
 
-            if(!hitEarly) Integrate(timeRemaining);
+            if (!hitEarly) Integrate(timeRemaining);
 
             CheckPocketed();
 
@@ -900,7 +911,7 @@ namespace PhysicsEngine
             }
         }
 
-        void Integrate(double dt)
+        void Integrate(Fixed64 dt)
         {
             foreach (var c in circles)
             {
@@ -916,8 +927,8 @@ namespace PhysicsEngine
                 Circle A = (Circle)hit.A;
                 Circle B = (Circle)hit.B;
 
-                double aDotN = A.Velocity.Dot(hit.normal);
-                double bDotN = B.Velocity.Dot(hit.normal);
+                Fixed64 aDotN = Vector2Fixed.Dot(A.Velocity, hit.normal);
+                Fixed64 bDotN = Vector2Fixed.Dot(B.Velocity, hit.normal);
 
                 A.Velocity = A.Velocity + (bDotN - aDotN) * hit.normal;
                 B.Velocity = B.Velocity + (aDotN - bDotN) * hit.normal;
@@ -932,12 +943,12 @@ namespace PhysicsEngine
 
                 if (!B.Bouncy)
                 {
-                    var along = A.Velocity.Dot(hit.normal);
+                    var along = Vector2Fixed.Dot(A.Velocity, hit.normal);
                     A.Velocity = A.Velocity - (hit.normal * along);
                 }
                 else
                 {
-                    A.Velocity = A.Velocity - (2 * A.Velocity.Dot(hit.normal) * hit.normal);
+                    A.Velocity = A.Velocity - (2 * Vector2Fixed.Dot(A.Velocity, hit.normal) * hit.normal);
                 }
 
                 A.Center += hit.normal * 100;
@@ -952,18 +963,17 @@ namespace PhysicsEngine
                 {
                     if (ball.IsPocketed) continue;
 
-                    double dx = ball.Center.X - hole.Center.X;
-                    double dy = ball.Center.Y - hole.Center.Y;
-                    double dist = Math.Sqrt(dx * dx + dy * dy);
+                    Fixed64 dx = ball.Center.X - hole.Center.X;
+                    Fixed64 dy = ball.Center.Y - hole.Center.Y;
+                    Fixed64 dist = Fixed64.Sqrt(dx * dx + dy * dy);
 
-                    if (dist + ball.Radius <= hole.Radius * 1.2)
+                    if (dist + ball.Radius <= hole.Radius * Fixed64.FromDouble(1.2))
                     {
                         ball.IsPocketed = true;
                         OnHole((ball, hole));
                     }
                 }
             }
-
         }
 
         void AddDrag()
@@ -976,7 +986,7 @@ namespace PhysicsEngine
 
                 c.ApplyFriction(PhysicsParameters.dt);
 
-                if (!c.IsPocketed & c.Velocity.Magnitude() > PhysicsParameters.minVelocity)
+                if (!c.IsPocketed & c.Velocity.Length() > PhysicsParameters.minVelocity)
                     spinning = true;
             }
 

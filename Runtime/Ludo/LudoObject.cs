@@ -138,11 +138,13 @@ public class LudoObject
         this.numPlayers = numPlayers;
     }
 
-    public void Init()
+    public void Init(int turnIndex)
     {
         Reset();
+        turn = (short)turnIndex;
+        doubleStreak = 0;
         OnReady?.Invoke();
-        OnTurnsSwitch?.Invoke(turn);
+        OnTurnsSwitch?.Invoke((short)turnIndex);
         OnStateUpdate?.Invoke(BitConverter.GetBytes((short)0).Concat(GetState()).ToArray());
     }
 
