@@ -1,15 +1,16 @@
 using System;
 using System.Collections.Generic;
+using FixedMath;
 
 namespace PhysicsEngine
 {
     public struct SweepHit
     {
         public enum HitType { Circle, Edge }
-        public double T;
-        public double Distance;
-        public Vector2 Point;
-        public Vector2 Normal;
+        public Fixed64 T;
+        public Fixed64 Distance;
+        public Vector2Fixed Point;
+        public Vector2Fixed Normal;
         public HitType hitType;
         public PhysicsObj hitObj;
 
@@ -19,19 +20,19 @@ namespace PhysicsEngine
     public static class CircleSweeper
     {
         public static bool Sweep(
-            Vector2 origin, double radius,
-            Vector2 direction, double distance,
+            Vector2Fixed origin, Fixed64 radius,
+            Vector2Fixed direction, Fixed64 distance,
             List<Circle> circles,
             List<Edge> edges,
             out SweepHit hit)
         {
             hit = default;
-            double bestT = double.MaxValue;
-            Vector2 dirNorm = direction.Normalized();
+            Fixed64 bestT = Fixed64.FromDouble(double.MaxValue);
+            Vector2Fixed dirNorm = direction.Normalized();
 
             foreach (var c in circles)
             {
-                if ((c.Center - origin).Magnitude() < radius)
+                if ((c.Center - origin).Length() < radius)
                 {
                     continue;
                 }
@@ -52,42 +53,42 @@ namespace PhysicsEngine
                 }
             }
 
-            return bestT <= 1.0;
+            return bestT <= Fixed64.One;
         }
 
         public static bool SweepVsCircle(
-            Vector2 origin, double radius,
-            Vector2 direction, double distance,
+            Vector2Fixed origin, Fixed64 radius,
+            Vector2Fixed direction, Fixed64 distance,
             Circle target,
             out SweepHit hit)
         {
             hit = default;
 
-            double combinedR = radius + target.Radius;
-            double deltaX = origin.X - target.Center.X;
-            double deltaY = origin.Y - target.Center.Y;
+            Fixed64 combinedR = radius + target.Radius;
+            Fixed64 deltaX = origin.X - target.Center.X;
+            Fixed64 deltaY = origin.Y - target.Center.Y;
 
-            double a = direction.Dot(direction);
-            double b = 2 * (deltaX * direction.X + deltaY * direction.Y);
-            double c = deltaX * deltaX + deltaY * deltaY - combinedR * combinedR;
-            double disc = b * b - 4 * a * c;
+            Fixed64 a = Vector2Fixed.Dot(direction, direction);
+            Fixed64 b = 2 * (deltaX * direction.X + deltaY * direction.Y);
+            Fixed64 c = deltaX * deltaX + deltaY * deltaY - combinedR * combinedR;
+            Fixed64 disc = b * b - 4 * a * c;
 
             if (disc < 0) return false;
 
-            double sqrtDisc = Math.Sqrt(disc);
-            double twoA = 2 * a;
+            Fixed64 sqrtDisc = Fixed64.Sqrt(disc);
+            Fixed64 twoA = 2 * a;
 
-            double t1 = (-b - sqrtDisc) / twoA;
-            double t2 = (-b + sqrtDisc) / twoA;
+            Fixed64 t1 = (-b - sqrtDisc) / twoA;
+            Fixed64 t2 = (-b + sqrtDisc) / twoA;
 
-            double t = double.MaxValue;
+            Fixed64 t = Fixed64.MaxValue;
             if (t1 >= 0 && t1 <= distance) t = t1;
             else if (t2 >= 0 && t2 <= distance) t = t2;
 
-            if (t == double.MaxValue || double.IsInfinity(t)) return false;
+            if (t == Fixed64.MaxValue || double.IsInfinity(t)) return false;
 
-            Vector2 hitPoint = origin + direction * t;
-            Vector2 normal = (hitPoint - target.Center).Normalized();
+            Vector2Fixed hitPoint = origin + direction * t;
+            Vector2Fixed normal = (hitPoint - target.Center).Normalized();
 
             hit = new SweepHit
             {
@@ -102,43 +103,43 @@ namespace PhysicsEngine
         }
 
         public static bool SweepVsEdge(
-            Vector2 origin, double radius,
-            Vector2 direction, double distance,
+            Vector2Fixed origin, Fixed64 radius,
+            Vector2Fixed direction, Fixed64 distance,
             Edge edge,
             out SweepHit hit)
         {
             hit = default;
-            double bestT = double.MaxValue;
+            Fixed64 bestT = double.MaxValue;
             SweepHit bestHit = default;
 
-            double ex = edge.P2.X - edge.P1.X;
-            double ey = edge.P2.Y - edge.P1.Y;
-            double edgeLenSq = ex * ex + ey * ey;
+            Fixed64 ex = edge.P2.X - edge.P1.X;
+            Fixed64 ey = edge.P2.Y - edge.P1.Y;
+            Fixed64 edgeLenSq = ex * ex + ey * ey;
 
             if (edgeLenSq > 1e-10)
             {
-                double nx = -ey;
-                double ny = ex;
-                Vector2 normal = new Vector2(nx, ny).Normalized();
+                Fixed64 nx = -ey;
+                Fixed64 ny = ex;
+                Vector2Fixed normal = new Vector2Fixed(nx, ny).Normalized();
 
-                double side = normal.X * (origin.X - edge.P1.X) + normal.Y * (origin.Y - edge.P1.Y);
-                if (side < 0) normal = new Vector2(-normal.X, -normal.Y);
+                Fixed64 side = normal.X * (origin.X - edge.P1.X) + normal.Y * (origin.Y - edge.P1.Y);
+                if (side < 0) normal = new Vector2Fixed(-normal.X, -normal.Y);
 
-                double dOrigin = normal.X * (origin.X - edge.P1.X) + normal.Y * (origin.Y - edge.P1.Y);
-                double dDir = normal.Dot(direction);
+                Fixed64 dOrigin = normal.X * (origin.X - edge.P1.X) + normal.Y * (origin.Y - edge.P1.Y);
+                Fixed64 dDir = normal.Dot(direction);
 
                 if (dDir < 0)
                 {
-                    double tHit = (dOrigin - radius) / -dDir;
+                    Fixed64 tHit = (dOrigin - radius) / -dDir;
 
                     if (tHit >= 0 && tHit <= distance && !double.IsInfinity(tHit))
                     {
-                        Vector2 hitPoint = origin + direction * tHit;
+                        Vector2Fixed hitPoint = origin + direction * tHit;
 
-                        double proj = ex * (hitPoint.X - edge.P1.X) + ey * (hitPoint.Y - edge.P1.Y);
+                        Fixed64 proj = ex * (hitPoint.X - edge.P1.X) + ey * (hitPoint.Y - edge.P1.Y);
                         if (proj >= 0 && proj <= edgeLenSq)
                         {
-                            double T = tHit / distance;
+                            Fixed64 T = tHit / distance;
                             if (T < bestT)
                             {
                                 bestT = T;
@@ -170,38 +171,38 @@ namespace PhysicsEngine
         }
 
         private static void CheckEndpoint(
-            Vector2 origin, double radius,
-            Vector2 direction, double distance,
-            Vector2 endpoint,
-            ref double bestT, ref SweepHit bestHit)
+            Vector2Fixed origin, Fixed64 radius,
+            Vector2Fixed direction, Fixed64 distance,
+            Vector2Fixed endpoint,
+            ref Fixed64 bestT, ref SweepHit bestHit)
         {
-            double dx = origin.X - endpoint.X;
-            double dy = origin.Y - endpoint.Y;
+            Fixed64 dx = origin.X - endpoint.X;
+            Fixed64 dy = origin.Y - endpoint.Y;
 
-            double a = direction.Dot(direction);
-            double b = 2 * (dx * direction.X + dy * direction.Y);
-            double c = dx * dx + dy * dy - radius * radius;
-            double disc = b * b - 4 * a * c;
+            Fixed64 a = direction.Dot(direction);
+            Fixed64 b = 2 * (dx * direction.X + dy * direction.Y);
+            Fixed64 c = dx * dx + dy * dy - radius * radius;
+            Fixed64 disc = b * b - 4 * a * c;
 
             if (disc < 0) return;
 
-            double sqrtDisc = Math.Sqrt(disc);
-            double twoA = 2 * a;
+            Fixed64 sqrtDisc = Math.Sqrt(disc);
+            Fixed64 twoA = 2 * a;
 
-            double t1 = (-b - sqrtDisc) / twoA;
-            double t2 = (-b + sqrtDisc) / twoA;
+            Fixed64 t1 = (-b - sqrtDisc) / twoA;
+            Fixed64 t2 = (-b + sqrtDisc) / twoA;
 
-            double t = double.MaxValue;
+            Fixed64 t = double.MaxValue;
             if (t1 >= 0 && t1 <= distance) t = t1;
             else if (t2 >= 0 && t2 <= distance) t = t2;
 
             if (t == double.MaxValue || double.IsInfinity(t)) return;
 
-            double T = t / distance;
+            Fixed64 T = t / distance;
             if (T >= bestT) return;
 
-            Vector2 hitPoint = origin + direction * t;
-            Vector2 normal = (hitPoint - endpoint).Normalized();
+            Vector2Fixed hitPoint = origin + direction * t;
+            Vector2Fixed normal = (hitPoint - endpoint).Normalized();
 
             bestT = T;
 

@@ -18,6 +18,7 @@ namespace FixedMath
         public static readonly Fixed64 TwoPi = FromDouble(Math.PI * 2);
         public static readonly Fixed64 HalfPi = FromDouble(Math.PI / 2);
         public static readonly Fixed64 Epsilon = FromRaw(1);
+        public static readonly Fixed64 MaxValue = FromDouble(double.MaxValue);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static Fixed64 FromRaw(long raw) { Fixed64 f; f.Raw = raw; return f; }
