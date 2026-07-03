@@ -118,6 +118,7 @@ public class LudoObject
     public Action<byte[]> OnStateUpdate;
     public Action OnReady;
     public Action<short[]> OnRollDice;
+    public Action OnSpinDice;
 
     public Action<short> OnEndGame;
     public Action<float> OnTimerUpdate;
@@ -127,6 +128,8 @@ public class LudoObject
 
     float lastTimer;
     float timer = 20;
+
+    int doubleStreak = 0;
 
     System.Random rand = new System.Random();
 
@@ -158,6 +161,7 @@ public class LudoObject
     bool doubleSix = false;
     public async void Roll()
     {
+        OnSpinDice?.Invoke();
         timer = 20;
 
         await Task.Delay(500);
@@ -168,12 +172,45 @@ public class LudoObject
         dice[2] = (short)(dice[0] + dice[1]);
 
         doubleSix = dice[2] == 12;
+        if (doubleSix) doubleStreak++;
 
         OnRollDice?.Invoke(dice);
+
+        if (doubleStreak >= 3)
+        {
+            SkipTurn();
+            return;
+        }
 
         if (!MoveAvailableOnRoll()) SkipTurn();
     }
 
+    public async void BotRollOverride(short a, short b)
+    {
+        OnSpinDice?.Invoke();
+        timer = 20;
+
+        await Task.Delay(500);
+
+        dice[0] = a;
+        dice[1] = b;
+        dice[2] = (short)(dice[0] + dice[1]);
+
+        doubleSix = dice[2] == 12;
+        if (doubleSix) doubleStreak++;
+
+        OnRollDice?.Invoke(dice);
+
+        if (doubleStreak >= 3)
+        {
+            SkipTurn();
+            return;
+        }
+
+        if (!MoveAvailableOnRoll()) SkipTurn();
+    }
+
+    //Client side will call this function
     public void RollOverride(short a, short b)
     {
         dice[0] = a;
@@ -238,13 +275,18 @@ public class LudoObject
 
     void NextTurn()
     {
-        if (!doubleSix) turn++;
+        if (!doubleSix)
+        {
+            turn++;
+            doubleStreak = 0;
+        }
         turn %= numPlayers;
         OnTurnsSwitch?.Invoke(turn);
     }
 
     void SkipTurn()
     {
+        doubleStreak = 0;
         doubleSix = false;//Just in case
         dice = new short[3] { 0, 0, 0 };
         chosen = -1;
