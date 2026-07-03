@@ -140,7 +140,7 @@ namespace FixedMath
             // Initial guess via bit-length shift, then refine using integer Newton iteration on the identity
             // r_{n+1} = (r_n + x/r_n) / 2, all in Fixed64 space (division already 128-bit safe).
             ulong ux = (ulong)x.Raw;
-            int bitLen = 64 - System.Numerics.BitOperations.LeadingZeroCount(ux);
+            int bitLen = 64 - LeadingZeroCount(ux);
             // initial guess: 2^(ceil((bitLen)/2)) scaled to fixed-point domain
             long guessRaw = 1L << Math.Max(1, (bitLen + FRAC_BITS) / 2);
             Fixed64 r = FromRaw(guessRaw);
@@ -245,6 +245,22 @@ namespace FixedMath
                 }
             }
             return FromRaw(z + extraAngle);
+        }
+
+        // Portable replacement for System.Numerics.BitOperations.LeadingZeroCount(ulong),
+        // which isn't available on Unity's .NET Standard 2.1 runtime.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static int LeadingZeroCount(ulong v)
+        {
+            if (v == 0) return 64;
+            int count = 0;
+            if (v <= 0x00000000FFFFFFFFUL) { count += 32; v <<= 32; }
+            if (v <= 0x0000FFFFFFFFFFFFUL) { count += 16; v <<= 16; }
+            if (v <= 0x00FFFFFFFFFFFFFFUL) { count += 8; v <<= 8; }
+            if (v <= 0x0FFFFFFFFFFFFFFFUL) { count += 4; v <<= 4; }
+            if (v <= 0x3FFFFFFFFFFFFFFFUL) { count += 2; v <<= 2; }
+            if (v <= 0x7FFFFFFFFFFFFFFFUL) { count += 1; }
+            return count;
         }
 
         public static Fixed64 Atan(Fixed64 v) => Atan2(v, One);
