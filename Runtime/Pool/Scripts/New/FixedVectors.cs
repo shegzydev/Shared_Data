@@ -6,6 +6,7 @@ namespace FixedMath
     {
         public Fixed64 X, Y;
         public Vector2Fixed(Fixed64 x, Fixed64 y) { X = x; Y = y; }
+        public Vector2Fixed(double x, double y) { X = (Fixed64)x; Y = (Fixed64)y; }
 
         public static readonly Vector2Fixed Zero = new Vector2Fixed(Fixed64.Zero, Fixed64.Zero);
 

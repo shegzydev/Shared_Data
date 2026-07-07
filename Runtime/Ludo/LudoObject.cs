@@ -232,6 +232,8 @@ public class LudoObject
     {
         if (chosen == -1) return;
 
+        if (!CanPieceUseDie(pieceIndex, chosen)) return;
+
         int color = pieceIndex / 4;
         int entry = pieceIndex % 4;
 
@@ -345,6 +347,114 @@ public class LudoObject
             }
         }
 
+        return false;
+    }
+
+    // ==================== Pure simulation helpers ====================
+
+    bool CanApply(short pos, short value, bool isCombo)
+    {
+        if (value == 0 || pos >= 56) return false;
+        if (pos == -1) return value == 6 && !isCombo;
+        return true;
+    }
+
+    // Read-only version of CheckCollision — does NOT mutate game state
+    bool WouldCapture(int colorIdx, short pos)
+    {
+        bool safe = (pos == -1 || pos >= 51);
+        if (safe) return false;
+
+        short abs = (short)((pos + 1 + colorIdx * 13) % 52);
+
+        for (int i = 0; i < 16; i++)
+        {
+            int otherColor = i / 4;
+            if (colorIdx % numPlayers == otherColor % numPlayers) continue;
+
+            var other = gamePieces[(color)otherColor][i % 4];
+            if (other.safe) continue;
+            if (other.getAbsolutePos() == abs) return true;
+        }
+        return false;
+    }
+
+    short SimulatePos(int colorIdx, short pos, short value, bool isCombo)
+    {
+        if (!CanApply(pos, value, isCombo)) return pos;
+
+        short p = (pos == -1) ? (short)0 : pos;
+        if (pos != -1)
+        {
+            for (int i = 0; i < value && p < 56; i++) p++;
+        }
+
+        // Same rule as Play(): landing on an enemy sends THIS piece home too
+        if (WouldCapture(colorIdx, p)) p = 56;
+
+        return p;
+    }
+
+    bool BothDiceUsableInOrder(int colorIdx, short pos, short firstIdx, short secondIdx)
+    {
+        if (!CanApply(pos, dice[firstIdx], firstIdx == 2)) return false;
+        short afterFirst = SimulatePos(colorIdx, pos, dice[firstIdx], firstIdx == 2);
+        return CanApply(afterFirst, dice[secondIdx], secondIdx == 2);
+    }
+
+    List<PieceObject> MovablePieces()
+    {
+        var list = new List<PieceObject>();
+        for (int i = 0; i < 16; i++)
+        {
+            int colorIdx = i / 4;
+            if (colorIdx % numPlayers != turn) continue;
+            var piece = gamePieces[(color)colorIdx][i % 4];
+            if (piece.pos < 56) list.Add(piece);
+        }
+        return list;
+    }
+
+    // ==================== Public API ====================
+
+    // Can this specific piece use this specific die slot right now?
+    // Accounts for capture and the "must use both dice" rule when it's the player's last piece.
+    public bool CanPieceUseDie(short pieceIndex, short diceIndex)
+    {
+        if (diceIndex < 0 || diceIndex > 2 || dice[diceIndex] == 0) return false;
+
+        int colorIdx = pieceIndex / 4;
+        int entry = pieceIndex % 4;
+        if (colorIdx < 0 || colorIdx > 3 || entry < 0 || entry > 3) return false;
+        if (colorIdx % numPlayers != turn) return false;
+
+        var piece = gamePieces[(color)colorIdx][entry];
+        if (!CanApply(piece.pos, dice[diceIndex], diceIndex == 2)) return false;
+
+        // Forced-order rule: only one movable piece, both individual dice still live
+        if (diceIndex != 2 && dice[0] != 0 && dice[1] != 0 && MovablePieces().Count == 1)
+        {
+            short other = (short)(1 - diceIndex);
+            bool thisFirstWorks = BothDiceUsableInOrder(colorIdx, piece.pos, diceIndex, other);
+            bool otherFirstWorks = BothDiceUsableInOrder(colorIdx, piece.pos, other, diceIndex);
+
+            // If only playing the OTHER die first lets both get used, this die is blocked as opener
+            if (otherFirstWorks && !thisFirstWorks) return false;
+        }
+
+        return true;
+    }
+
+    // Does this piece have any usable die at all (any of the 3 slots)?
+    public bool HasValidMove(short pieceIndex) =>
+        CanPieceUseDie(pieceIndex, 0) || CanPieceUseDie(pieceIndex, 1) || CanPieceUseDie(pieceIndex, 2);
+
+    // Does ANY piece belonging to the current player have a legal move for this die?
+    public bool HasValidMoveForDie(short diceIndex)
+    {
+        if (diceIndex < 0 || diceIndex > 2 || dice[diceIndex] == 0) return false;
+        for (int i = 0; i < 16; i++)
+            if (CanPieceUseDie((short)i, diceIndex)) return true;
         return false;
     }
 

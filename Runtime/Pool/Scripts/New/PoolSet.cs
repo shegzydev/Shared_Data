@@ -119,7 +119,7 @@ namespace PhysicsEngine
             // Add object balls
             for (int i = 0; i < MetaData.rack.Length; i++)
             {
-                var ball = new Circle(MetaData.rack[i].X, MetaData.rack[i].Y)
+                var ball = new Circle(MetaData.rack[i].X, MetaData.rack[i].Y, PhysicsParameters.ballRadius)
                 {
                     tag = (i < 7) ? "solids" : ((i > 7) ? "stripes" : "black")
                 };
@@ -184,7 +184,7 @@ namespace PhysicsEngine
         void HoleHandler((Circle ball, Circle hole) data)
         {
             data.ball.Center = MetaData.dropPosition;
-            data.ball.Velocity = new Vector2Fixed(1, 0) * data.ball.Velocity.Length();
+            data.ball.Velocity = new Vector2Fixed(1.0, 0) * data.ball.Velocity.Length();
             data.ball.IsPocketed = true;
 
             if (data.ball == cueBall)
@@ -493,7 +493,7 @@ namespace PhysicsEngine
 
             foreach (var pottedBall in potted)
             {
-                pottedBall.ApplyGravity(-500000);
+                pottedBall.ApplyGravity(-500);
             }
 
             physics.Tick();

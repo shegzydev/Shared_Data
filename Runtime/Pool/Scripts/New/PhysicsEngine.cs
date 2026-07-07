@@ -6,16 +6,15 @@ namespace PhysicsEngine
 {
     public class PhysicsParameters
     {
-        public static readonly Fixed64 SCALE = Fixed64.FromDouble(1000.0); // Scale factor (1 unit = 0.001 in real world)
         public static readonly int solverIterations = 20;
         public static readonly Fixed64 restitution = Fixed64.FromDouble(1.0);
         public static readonly Fixed64 friction = Fixed64.FromDouble(0.997);
-        public static readonly Fixed64 tickRate = Fixed64.FromDouble(60.0);
+        public static readonly Fixed64 tickRate = Fixed64.FromDouble(500.0);
         public static readonly Fixed64 tickMs = Fixed64.FromDouble(1000.0) / tickRate;
         public static readonly Fixed64 maxTickMS = tickMs * 4;
         public static readonly Fixed64 dt = tickMs / 1000;
-        public static readonly Fixed64 minVelocity = Fixed64.FromDouble(300.0);       // 0.01 * SCALE
-        public static readonly Fixed64 ballRadius = Fixed64.FromDouble(2925.0);      // 2.925 * 1000
+        public static readonly Fixed64 minVelocity = Fixed64.FromDouble(0.3000);       // 0.01 * SCALE
+        public static readonly Fixed64 ballRadius = Fixed64.FromDouble(2.9250);      // 2.925 * 1000
 
         public static bool circleCollided, edgeCollided = false;
     }
@@ -83,7 +82,7 @@ namespace PhysicsEngine
             Fixed64 ex = P2.X - P1.X;
             Fixed64 ey = P2.Y - P1.Y;
             Fixed64 lenSq = ex * ex + ey * ey;
-            if (lenSq < Fixed64.FromDouble(1e-10)) return P1;
+            if (lenSq < Fixed64.Epsilon) return P1;
 
             Fixed64 t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
             t = FixedMathUtil.Max(Fixed64.Zero, FixedMathUtil.Min(Fixed64.One, t));
@@ -96,7 +95,7 @@ namespace PhysicsEngine
             Fixed64 ex = P2.X - P1.X;
             Fixed64 ey = P2.Y - P1.Y;
             Fixed64 lenSq = ex * ex + ey * ey;
-            if (lenSq < Fixed64.FromDouble(1e-10)) return P1;
+            if (lenSq < Fixed64.Epsilon) return P1;
 
             Fixed64 t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
 
@@ -110,7 +109,7 @@ namespace PhysicsEngine
 
             Fixed64 lenSq = ex * ex + ey * ey;
 
-            if (lenSq < Fixed64.FromDouble(1e-10)) return 0;
+            if (lenSq < Fixed64.Epsilon) return 0;
 
             Fixed64 t = ((point.X - P1.X) * ex + (point.Y - P1.Y) * ey) / lenSq;
 
@@ -754,7 +753,7 @@ namespace PhysicsEngine
 
             Vector2Fixed normal;
             if (dist < Fixed64.Epsilon)
-                normal = new Vector2Fixed(1, 0);
+                normal = new Vector2Fixed(1.0, 0);
             else
                 normal = new Vector2Fixed(dx / dist, dy / dist);
 
@@ -863,28 +862,32 @@ namespace PhysicsEngine
         {
             PhysicsParameters.circleCollided = PhysicsParameters.edgeCollided = false;
 
-            Fixed64 timeRemaining = PhysicsParameters.dt;
+            // Fixed64 timeRemaining = PhysicsParameters.dt;
 
-            bool hitEarly;
+            // bool hitEarly;
 
-            while (hitEarly = solver.GetEarliestImpact(circles, edges, timeRemaining, out var hit))
-            {
-                if (hit.TOI > Fixed64.Zero)
-                {
-                    Integrate(hit.TOI);
+            // while (hitEarly = solver.GetEarliestImpact(circles, edges, timeRemaining, out var hit))
+            // {
+            //     if (hit.TOI > Fixed64.Zero)
+            //     {
+            //         Integrate(hit.TOI);
 
-                    Resolve(hit);
+            //         Resolve(hit);
 
-                    timeRemaining -= hit.TOI;
-                }
-                else
-                {
-                    break;
-                    //Chain Reaction
-                }
-            }
+            //         timeRemaining -= hit.TOI;
+            //     }
+            //     else
+            //     {
+            //         break;
+            //         //Chain Reaction
+            //     }
+            // }
 
-            if (!hitEarly) Integrate(timeRemaining);
+            // if (!hitEarly) Integrate(timeRemaining);
+
+            Integrate(PhysicsParameters.dt);
+
+            RemoveOverlaps();
 
             CheckPocketed();
 
