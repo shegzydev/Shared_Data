@@ -208,6 +208,15 @@ public class GigNet
     }
 #endif
 
+    public static void NotifyReady()
+    {
+        var payload = Util.MergeArrays(BitConverter.GetBytes((int)PackType.Ready), new byte[0]);
+        var length = payload.Length;
+        var finalPayload = Util.MergeArrays(BitConverter.GetBytes(length), payload);
+
+        client?.SendTCPMessage(finalPayload);
+    }
+
     public static void Tick()
     {
         // NetworkManager.Instance.Update();

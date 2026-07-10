@@ -242,12 +242,25 @@ public class LudoObject
         short start = piece.pos;
         short steps = piece.MoveSteps(dice[chosen], chosen == 2);
 
+        OnPlay?.Invoke((pieceIndex, start, piece.pos, steps));
+
+        if (chosen < 2 && dice[1 - chosen] > 0 && numTurnPawnsInPlay(out var inPlay) == 1)
+        {
+            var piece2 = inPlay[0].obj;
+            short index = (short)inPlay[0].index;
+
+            short start2 = piece2.pos;
+            short steps2 = piece2.MoveSteps(dice[1 - chosen], false);
+
+            OnPlay?.Invoke((index, start2, piece2.pos, steps2));
+
+            dice[1 - chosen] = 0;
+        }
+
         if (!piece.safe && CheckCollision((color)color, piece.getAbsolutePos()))
         {
             piece.End();
         }
-
-        OnPlay?.Invoke((pieceIndex, start, piece.pos, steps));
 
         if (chosen == 2)
         {
@@ -310,6 +323,27 @@ public class LudoObject
         }
 
         return done == ((numPlayers == 2) ? 8 : 4);
+    }
+
+    int numTurnPawnsInPlay(out List<(PieceObject obj, int index)> availablePieces)
+    {
+        int pawnsInPlay = 0;
+        availablePieces = new();
+
+        for (int i = 0; i < 16; i++)
+        {
+            short curr_turn = (short)((i / 4) % numPlayers);
+            if (turn != curr_turn) continue;
+            var piece = gamePieces[(color)(i / 4)][i % 4];
+
+            if (piece.pos > -1 && piece.pos < 56)
+            {
+                pawnsInPlay++;
+                availablePieces.Add((piece, i));
+            }
+        }
+
+        return pawnsInPlay;
     }
 
     bool MoveAvailableOnRoll()
@@ -568,7 +602,7 @@ public class LudoObject
         get
         {
             short sum = 0;
-            for (byte i = 0; i < 3; i++)
+            for (byte i = 0; i < 2; i++)
             {
                 sum += dice[i];
             }

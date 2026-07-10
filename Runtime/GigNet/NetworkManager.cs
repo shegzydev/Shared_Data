@@ -21,7 +21,7 @@ public enum TargetGroup
 
 internal enum PackType
 {
-    RPC, IDAssignment, Instantiation, Heartbeat, Destroy, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom, ForceQuit, Rejected, LeftRoom
+    RPC, IDAssignment, Instantiation, Heartbeat, Destroy, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom, ForceQuit, Rejected, LeftRoom, Ready
 }
 
 internal enum ActionType
