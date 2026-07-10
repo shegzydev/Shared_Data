@@ -185,6 +185,11 @@ public class LudoObject
         }
 
         if (!MoveAvailableOnRoll()) SkipTurn();
+
+        if (numTurnPawnsInPlay(out var inPlay) == 1)
+        {
+            Play((short)inPlay[0].index);
+        }
     }
 
     public async void BotRollOverride(short a, short b)
@@ -210,6 +215,11 @@ public class LudoObject
         }
 
         if (!MoveAvailableOnRoll()) SkipTurn();
+
+        if (numTurnPawnsInPlay(out var inPlay) == 1)
+        {
+            Play((short)inPlay[0].index);
+        }
     }
 
     //Client side will call this function
@@ -246,15 +256,17 @@ public class LudoObject
 
         if (chosen < 2 && dice[1 - chosen] > 0 && numTurnPawnsInPlay(out var inPlay) == 1)
         {
-            var piece2 = inPlay[0].obj;
-            short index = (short)inPlay[0].index;
+            if (!(dice[1 - chosen] == 6 && numTurnPawnsInHome(out var _) > 0))
+            {
+                var piece2 = inPlay[0].obj;
+                short index = (short)inPlay[0].index;
 
-            short start2 = piece2.pos;
-            short steps2 = piece2.MoveSteps(dice[1 - chosen], false);
+                short start2 = piece2.pos;
+                short steps2 = piece2.MoveSteps(dice[1 - chosen], false);
 
-            OnPlay?.Invoke((index, start2, piece2.pos, steps2));
-
-            dice[1 - chosen] = 0;
+                OnPlay?.Invoke((index, start2, piece2.pos, steps2));
+                dice[1 - chosen] = 0;
+            }
         }
 
         if (!piece.safe && CheckCollision((color)color, piece.getAbsolutePos()))
@@ -344,6 +356,27 @@ public class LudoObject
         }
 
         return pawnsInPlay;
+    }
+
+    int numTurnPawnsInHome(out List<(PieceObject obj, int index)> homePieces)
+    {
+        int pawnsInHome = 0;
+        homePieces = new();
+
+        for (int i = 0; i < 16; i++)
+        {
+            short curr_turn = (short)((i / 4) % numPlayers);
+            if (turn != curr_turn) continue;
+            var piece = gamePieces[(color)(i / 4)][i % 4];
+
+            if (piece.pos == -1)
+            {
+                pawnsInHome++;
+                homePieces.Add((piece, i));
+            }
+        }
+
+        return pawnsInHome;
     }
 
     bool MoveAvailableOnRoll()
