@@ -188,6 +188,7 @@ public class LudoObject
 
         if (numTurnPawnsInPlay(out var inPlay) == 1)
         {
+            chosen = 2;
             Play((short)inPlay[0].index);
         }
     }
@@ -218,6 +219,7 @@ public class LudoObject
 
         if (numTurnPawnsInPlay(out var inPlay) == 1)
         {
+            chosen = 2;
             Play((short)inPlay[0].index);
         }
     }
