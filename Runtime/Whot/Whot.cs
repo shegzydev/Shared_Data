@@ -241,7 +241,7 @@ public class Whot
         hands[player].RemoveAt(handIndex);
         OnPlay?.Invoke((handIndex, player));
 
-        if(HandEmpty())
+        if (HandEmpty())
         {
             endGame = true;
             byte[] count = CountCards(out int winner);
@@ -533,6 +533,143 @@ public class Whot
 
     Random rng = new Random();
 
+    // How many cards to peek at from the deck before picking the best one (used when scanEntireDeck is false)
+    const int SwapPeekCount = 3;
+
+    int EvaluateCardValue(Card card, Dictionary<Suit, int> suitCounts, Suit lastSuit, int lastNumber,
+    bool considerOtherHands = false, int excludePlayer = -1)
+    {
+        int score = 0;
+
+        // 1. Immediate playability (biggest weight — can I use this NOW?)
+        if (card.Number == lastNumber) score += 150;
+        if (card.Suit == lastSuit) score += 100;
+        if (card.Number == 20) score += 250; // Whot is always playable
+
+        // 2. Power card bonus (2=pick2, 5=pick3, 8=skip, 1=hold, 14=general market)
+        switch (card.Number)
+        {
+            case 2: score += 90; break;
+            case 8: score += 70; break;
+            case 1: score += 60; break;
+            case 14: score += 50; break; // situational, hurts you sometimes
+        }
+
+        // 3. Suit synergy — does this card match a suit I'm already stacked in?
+        if (suitCounts.TryGetValue(card.Suit, out int count))
+            score += count * 15;
+
+        // 4. Flexibility — low numbers/common numbers appear across more suits,
+        // so they're statistically easier to chain later
+        if (card.Number <= 5) score += 10;
+
+        // 5. Opponent awareness — penalize suits opponents are close to winning with,
+        // reward cards that deny opponents a suit they're clearly stacked in
+        if (considerOtherHands)
+        {
+            for (int p = 0; p < hands.Length; p++)
+            {
+                if (p == excludePlayer) continue;
+
+                var opponentHand = hands[p];
+                int opponentSuitCount = 0;
+
+                for (int i = 0; i < opponentHand.Count; i++)
+                {
+                    if (cards[opponentHand[i]].Suit == card.Suit)
+                        opponentSuitCount++;
+                }
+
+                // If an opponent is low on cards AND heavily stacked in this suit,
+                // holding/denying this card matters more
+                if (opponentHand.Count <= 3 && opponentSuitCount >= 2)
+                    score += 40;
+
+                // Opponent close to winning overall — slightly favor any denial card
+                if (opponentHand.Count == 1)
+                    score += 25;
+            }
+        }
+
+        return score;
+    }
+
+    public bool SwapCard(int player, bool scanEntireDeck = false, bool considerOtherHands = false)
+    {
+        if (player != turn) return false;
+        if (deck.Count == 0) return false;
+
+        var hand = hands[player];
+        var lastCard = cards[played.Peek()];
+
+        if (mustSuit != Suit.NIL)
+        {
+            lastCard = new Card(mustSuit, 0);
+        }
+
+        var suitCounts = new Dictionary<Whot.Suit, int>();
+        for (int i = 0; i < hand.Count; i++)
+        {
+            var s = cards[hand[i]].Suit;
+            suitCounts[s] = suitCounts.TryGetValue(s, out int c) ? c + 1 : 1;
+        }
+
+        int worstLocalIndex = 0;
+        int worstScore = int.MaxValue;
+        for (int i = 0; i < hand.Count; i++)
+        {
+            int score = EvaluateCardValue(cards[hand[i]], suitCounts, lastCard.Suit, lastCard.Number, considerOtherHands, player);
+            if (score < worstScore)
+            {
+                worstScore = score;
+                worstLocalIndex = i;
+            }
+        }
+        int worstCardIndex = hand[worstLocalIndex];
+
+        // Snapshot deck contents BEFORE any dequeuing happens
+        // var deckBeforeSnapshot = deck.ToArray();
+
+        int peekCount = scanEntireDeck ? deck.Count : Math.Min(SwapPeekCount, deck.Count);
+        var peeked = new List<int>(peekCount);
+        for (int i = 0; i < peekCount; i++)
+            peeked.Add(deck.Dequeue());
+
+        int bestPeekIndex = 0;
+        int bestScore = int.MinValue;
+        for (int i = 0; i < peeked.Count; i++)
+        {
+            int score = EvaluateCardValue(cards[peeked[i]], suitCounts, lastCard.Suit, lastCard.Number, considerOtherHands, player);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestPeekIndex = i;
+            }
+        }
+        int bestCardIndex = peeked[bestPeekIndex];
+
+        if (bestCardIndex == worstCardIndex)
+        {
+            for (int i = 0; i < peeked.Count; i++)
+                deck.Enqueue(peeked[i]);
+            return false;
+        }
+
+        // var handBeforeSnapshot = new List<int>(hand);
+
+        hand[worstLocalIndex] = bestCardIndex;
+
+        peeked[bestPeekIndex] = worstCardIndex;
+        for (int i = 0; i < peeked.Count; i++)
+            deck.Enqueue(peeked[i]);
+
+        // LogSwap(player, worstCardIndex, bestCardIndex, handBeforeSnapshot, deckBeforeSnapshot);
+
+        OnGameStateUpdate?.Invoke(GetState());
+
+        return true;
+    }
+
     public int DeckSize => deck != null ? deck.Count : 52;
     public int[] handsSize
     {
@@ -721,6 +858,7 @@ public class Whot
     public int lastCard => played.Peek();
     public Suit mustSuit => NextSuit;
     public List<int> currentHand => hands[turn];
+    public List<int> getHand(int player) => hands[player];
     public Card[] gameCards => cards;
 
     public void RemovePlayer(int player)
@@ -738,6 +876,47 @@ public class Whot
     }
 
     public int removedPlayers => leftPlayers.Count;
+
+    public struct SwapLogEntry
+    {
+        public DateTime timestamp;
+        public int player;
+        public Card cardOut;
+        public Card cardIn;
+        public Card[] handBefore;
+        public Card[] handAfter;
+        public Card[] deckBefore;
+        public Card[] deckAfter;
+    }
+
+    readonly List<SwapLogEntry> swapLog = new();
+    public IReadOnlyList<SwapLogEntry> SwapLog => swapLog;
+
+    void LogSwap(int player, int cardOutIndex, int cardInIndex, List<int> handBeforeSnapshot, int[] deckBeforeSnapshot)
+    {
+        var entry = new SwapLogEntry
+        {
+            timestamp = DateTime.UtcNow,
+            player = player,
+            cardOut = cards[cardOutIndex],
+            cardIn = cards[cardInIndex],
+            handBefore = handBeforeSnapshot.Select(i => cards[i]).ToArray(),
+            handAfter = hands[player].Select(i => cards[i]).ToArray(),
+            deckBefore = deckBeforeSnapshot.Select(i => cards[i]).ToArray(),
+            deckAfter = deck.Select(i => cards[i]).ToArray()
+        };
+
+        swapLog.Add(entry);
+
+        Console.WriteLine(
+            $"[SWAP] {entry.timestamp:O} player={player} " +
+            $"out=({entry.cardOut.Suit},{entry.cardOut.Number}) " +
+            $"in=({entry.cardIn.Suit},{entry.cardIn.Number}) " +
+            $"hand_before=[{string.Join(",", entry.handBefore.Select(c => $"{c.Suit}:{c.Number}"))}] " +
+            $"hand_after=[{string.Join(",", entry.handAfter.Select(c => $"{c.Suit}:{c.Number}"))}] " +
+            $"deck_before=[{string.Join(",", entry.deckBefore.Select(c => $"{c.Suit}:{c.Number}"))}] " +
+            $"deck_after=[{string.Join(",", entry.deckAfter.Select(c => $"{c.Suit}:{c.Number}"))}]");
+    }
 }
 
 internal static class ListExtensions
