@@ -188,8 +188,11 @@ public class LudoObject
 
         if (numTurnPawnsInPlay(out var inPlay) == 1)
         {
-            chosen = 2;
-            Play((short)inPlay[0].index);
+            if (!((dice[0] == 6 || dice[1] == 6) && numTurnPawnsInHome(out var _) > 0))
+            {
+                chosen = 2;
+                Play((short)inPlay[0].index);
+            }
         }
     }
 
@@ -219,8 +222,11 @@ public class LudoObject
 
         if (numTurnPawnsInPlay(out var inPlay) == 1)
         {
-            chosen = 2;
-            Play((short)inPlay[0].index);
+            if (!((dice[0] == 6 || dice[1] == 6) && numTurnPawnsInHome(out var _) > 0))
+            {
+                chosen = 2;
+                Play((short)inPlay[0].index);
+            }
         }
     }
 
@@ -254,8 +260,6 @@ public class LudoObject
         short start = piece.pos;
         short steps = piece.MoveSteps(dice[chosen], chosen == 2);
 
-        OnPlay?.Invoke((pieceIndex, start, piece.pos, steps));
-
         if (chosen < 2 && dice[1 - chosen] > 0 && numTurnPawnsInPlay(out var inPlay) == 1)
         {
             if (!(dice[1 - chosen] == 6 && numTurnPawnsInHome(out var _) > 0))
@@ -266,7 +270,8 @@ public class LudoObject
                 short start2 = piece2.pos;
                 short steps2 = piece2.MoveSteps(dice[1 - chosen], false);
 
-                OnPlay?.Invoke((index, start2, piece2.pos, steps2));
+                steps += steps2;
+                // OnPlay?.Invoke((index, start2, piece2.pos, steps2));
                 dice[1 - chosen] = 0;
             }
         }
@@ -275,6 +280,8 @@ public class LudoObject
         {
             piece.End();
         }
+
+        OnPlay?.Invoke((pieceIndex, start, piece.pos, steps));
 
         if (chosen == 2)
         {
