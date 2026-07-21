@@ -363,8 +363,6 @@ public class LudoObject
             dice[2] = (short)(dice[0] + dice[1]);
         }
 
-        OnStateUpdate?.Invoke(BitConverter.GetBytes(steps).Concat(GetState()).ToArray());
-
         if (GameOver())
         {
             OnEndGame?.Invoke(turn);
@@ -378,6 +376,8 @@ public class LudoObject
 
         chosen = -1;
         timer = 20;
+
+        OnStateUpdate?.Invoke(BitConverter.GetBytes(steps).Concat(GetState()).ToArray());
     }
 
     void NextTurn()
@@ -689,11 +689,11 @@ public class LudoObject
         {
             using (BinaryWriter writer = new BinaryWriter(stream))
             {
+                writer.Write(turn);
                 writer.Write(chosen);
                 writer.Write(dice[0]);
                 writer.Write(dice[1]);
                 writer.Write(dice[2]);
-                writer.Write(turn);
 
                 var positionData = positions;
                 foreach (var pos in positionData)
@@ -712,11 +712,11 @@ public class LudoObject
         {
             BinaryReader reader = new BinaryReader(stream);
 
+            turn = reader.ReadInt16();
             chosen = reader.ReadInt16();
             dice[0] = reader.ReadInt16();
             dice[1] = reader.ReadInt16();
             dice[2] = reader.ReadInt16();
-            turn = reader.ReadInt16();
 
             for (byte i = 0; i < 16; i++)
             {
