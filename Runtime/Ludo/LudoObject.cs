@@ -126,16 +126,22 @@ public class LudoObject
     public short turn { get; private set; }
     short numPlayers;
 
+    public short playerCount => numPlayers;
+
     float lastTimer;
     float timer = 20;
 
     int doubleStreak = 0;
+    int[] sixStreak;
 
-    System.Random rand = new System.Random();
+    Random rand = new Random();
+
+    LudoMoveSpoofer ludoMoveSpoofer = new();
 
     public LudoObject(short numPlayers)
     {
         this.numPlayers = numPlayers;
+        sixStreak = new int[numPlayers];
     }
 
     public void Init(int turnIndex)
@@ -161,20 +167,43 @@ public class LudoObject
     short[] dice = new short[3];
     short chosen = -1;
     bool doubleSix = false;
-    public async void Roll()
+    public async void Roll(Action<(int a, int b)> OnRoll = null)
     {
         OnSpinDice?.Invoke();
         timer = 20;
 
         await Task.Delay(500);
 
-        dice[0] = (short)rand.Next(1, 7);
-        dice[1] = (short)rand.Next(1, 7);
+        if (ludoMoveSpoofer.TryGetAdvantageousRoll(this, turn, out var a, out var b))
+        {
+            dice[0] = a;
+            dice[1] = b;
+            dice[2] = (short)(a + b);
+        }
+        else
+        {
+            dice[0] = (short)rand.Next(1, 7);
+            dice[1] = (short)rand.Next(1, 7);
+            dice[2] = (short)(dice[0] + dice[1]);
+        }
 
-        dice[2] = (short)(dice[0] + dice[1]);
+        if (dice[2] == 12 && sixStreak[turn] > 0)
+        {
+            int i = rand.Next(2);
+            dice[i] -= (short)rand.Next(1, 6);
+            dice[2] = (short)(dice[0] + dice[1]);
+        }
 
         doubleSix = dice[2] == 12;
-        if (doubleSix) doubleStreak++;
+        if (doubleSix)
+        {
+            sixStreak[turn] = 1000;
+            doubleStreak++;
+        }
+
+        sixStreak[turn]--;
+
+        OnRoll?.Invoke((dice[0], dice[1]));
 
         OnRollDice?.Invoke(dice);
 
@@ -207,8 +236,21 @@ public class LudoObject
         dice[1] = b;
         dice[2] = (short)(dice[0] + dice[1]);
 
+        if (dice[2] == 12 && sixStreak[turn] > 0)
+        {
+            int i = rand.Next(2);
+            dice[i] -= (short)rand.Next(1, 6);
+            dice[2] = (short)(dice[0] + dice[1]);
+        }
+
         doubleSix = dice[2] == 12;
-        if (doubleSix) doubleStreak++;
+        if (doubleSix)
+        {
+            sixStreak[turn] = 1000;
+            doubleStreak++;
+        }
+
+        sixStreak[turn]--;
 
         OnRollDice?.Invoke(dice);
 
@@ -260,19 +302,29 @@ public class LudoObject
         short start = piece.pos;
         short steps = piece.MoveSteps(dice[chosen], chosen == 2);
 
-        if (chosen < 2 && dice[1 - chosen] > 0 && numTurnPawnsInPlay(out var inPlay) == 1)
+        bool noneLeft = false;
+
+        if (chosen < 2 && dice[1 - chosen] > 0)
         {
-            if (!(dice[1 - chosen] == 6 && numTurnPawnsInHome(out var _) > 0))
+            var avail = numTurnPawnsInPlay(out var inPlay);
+            if (avail == 1)
             {
-                var piece2 = inPlay[0].obj;
-                short index = (short)inPlay[0].index;
+                if (!(dice[1 - chosen] == 6 && numTurnPawnsInHome(out var _) > 0))
+                {
+                    var piece2 = inPlay[0].obj;
+                    short index = (short)inPlay[0].index;
 
-                short start2 = piece2.pos;
-                short steps2 = piece2.MoveSteps(dice[1 - chosen], false);
+                    short start2 = piece2.pos;
+                    short steps2 = piece2.MoveSteps(dice[1 - chosen], false);
 
-                steps += steps2;
-                // OnPlay?.Invoke((index, start2, piece2.pos, steps2));
-                dice[1 - chosen] = 0;
+                    steps += steps2;
+                    // OnPlay?.Invoke((index, start2, piece2.pos, steps2));
+                    dice[1 - chosen] = 0;
+                }
+            }
+            else if (avail == 0)
+            {
+                noneLeft = true;
             }
         }
 
@@ -301,7 +353,7 @@ public class LudoObject
             OnEndGame?.Invoke(turn);
         }
 
-        if (TurnEnded)
+        if (TurnEnded || noneLeft)
         {
             NextTurn();
             doubleSix = false;
