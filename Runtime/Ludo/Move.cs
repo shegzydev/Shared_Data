@@ -1,5 +1,8 @@
 public class LudoMoveSpoofer
 {
+    bool findKill = false;
+
+    private readonly GuaranteedRoller guaranteedRoller;
     private readonly Random rng;
 
     public int RigThreshold { get; set; } = 95;
@@ -9,10 +12,13 @@ public class LudoMoveSpoofer
     public LudoMoveSpoofer(Random rng)
     {
         this.rng = rng ?? throw new ArgumentNullException(nameof(rng));
+        guaranteedRoller = new GuaranteedRoller(1, 5);
     }
 
     public bool TryGetAdvantageousRoll(LudoObject game, int turnIndex, out short a, out short b)
     {
+        findKill = guaranteedRoller.Roll();
+
         var numPlayers = game.playerCount;
         var positions = game.positions;
 
@@ -134,7 +140,7 @@ public class LudoMoveSpoofer
         else if (dest >= 51) score += 30;          // reaching the safe home stretch
 
         if (dest < 51 && CapturesOpponent(dest, pieceColor, allPositions, OwnedColors))
-            score += ((rng.NextInt64() % 15 == 0) ? 250 : 10);
+            score += (findKill ? 250 : 10);
 
         if (pos >= 0 && pos < 51 && IsExposed(pos, pieceColor, allPositions, OwnedColors))
             score += 150; // mild bonus for moving a piece that's currently sitting in capture range
@@ -200,5 +206,38 @@ public class LudoMoveSpoofer
     private short AbsolutePos(short pos, color col)
     {
         return (short)((pos + 1 + (short)col * 13) % 52);
+    }
+}
+
+public class GuaranteedRoller
+{
+    private readonly Random _rng = new Random();
+    private readonly int _batchSize;
+    private readonly int _hitsPerBatch;
+    private List<bool> _bag = new();
+    private int _index;
+
+    public GuaranteedRoller(int hitsPerBatch, int batchSize)
+    {
+        _hitsPerBatch = hitsPerBatch;
+        _batchSize = batchSize;
+        RefillBag();
+    }
+
+    private void RefillBag()
+    {
+        _bag = Enumerable.Repeat(true, _hitsPerBatch)
+            .Concat(Enumerable.Repeat(false, _batchSize - _hitsPerBatch))
+            .OrderBy(_ => _rng.Next())
+            .ToList();
+        _index = 0;
+    }
+
+    public bool Roll()
+    {
+        if (_index >= _bag.Count)
+            RefillBag();
+
+        return _bag[_index++];
     }
 }

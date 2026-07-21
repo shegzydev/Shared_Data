@@ -137,12 +137,18 @@ public class LudoObject
 
     Random rand = new Random();
 
-    LudoMoveSpoofer ludoMoveSpoofer = new();
+    LudoMoveSpoofer[] ludoMoveSpoofer;
 
     public LudoObject(short numPlayers)
     {
         this.numPlayers = numPlayers;
         sixStreak = new int[numPlayers];
+
+        ludoMoveSpoofer = new LudoMoveSpoofer[numPlayers];
+        for (int i = 0; i < ludoMoveSpoofer.Length; i++)
+        {
+            ludoMoveSpoofer[i] = new LudoMoveSpoofer();
+        }
     }
 
     public void Init(int turnIndex)
@@ -175,7 +181,7 @@ public class LudoObject
 
         await Task.Delay(500);
 
-        if (ludoMoveSpoofer.TryGetAdvantageousRoll(this, turn, out var a, out var b))
+        if (ludoMoveSpoofer[turn].TryGetAdvantageousRoll(this, turn, out var a, out var b))
         {
             dice[0] = a;
             dice[1] = b;
