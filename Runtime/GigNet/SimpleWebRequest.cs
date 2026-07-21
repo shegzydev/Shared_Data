@@ -160,7 +160,7 @@ internal static class SimpleWebRequest
             using (var cts = new CancellationTokenSource(10000))
             using (var request = new HttpRequestMessage(method, url))
             {
-                var finalCTS = CancellationTokenSource.CreateLinkedTokenSource(cts.Token, NetworkManager.cts.Token);
+                var finalCTS = CancellationTokenSource.CreateLinkedTokenSource(cts.Token);
 
                 // Add headers - separate content headers from request headers
                 if (headers != null)

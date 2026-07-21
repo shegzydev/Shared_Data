@@ -116,6 +116,7 @@ public class LudoObject
     public Action<(short pieceIndex, short start, short end, short steps)> OnPlay;
     public Action<short> OnTurnsSwitch;
     public Action<byte[]> OnStateUpdate;
+    public Action OnUIUpdate;
     public Action OnReady;
     public Action<short[]> OnRollDice;
     public Action OnSpinDice;
@@ -278,7 +279,17 @@ public class LudoObject
         dice[0] = a;
         dice[1] = b;
         dice[2] = (short)(dice[0] + dice[1]);
+
         OnRollDice?.Invoke(dice);
+
+        if (numTurnPawnsInPlay(out var inPlay) == 1)
+        {
+            if (!((dice[0] == 6 || dice[1] == 6) && numTurnPawnsInHome(out var _) > 0))
+            {
+                chosen = 2;
+                Play((short)inPlay[0].index);
+            }
+        }
     }
 
     public bool Choose(short i)
@@ -644,6 +655,23 @@ public class LudoObject
         }
     }
 
+    public short[] absoluePositions
+    {
+        get
+        {
+            List<short> poss = new();
+            for (int i = 0; i < 4; i++)
+            {
+                foreach (var piece in gamePieces[(color)i])
+                {
+                    var pos = piece.getAbsolutePos();
+                    poss.Add(pos);
+                }
+            }
+            return poss.ToArray();
+        }
+    }
+
     public static implicit operator bool(LudoObject myObject)
     {
         return myObject != null;
@@ -655,7 +683,12 @@ public class LudoObject
         {
             using (BinaryWriter writer = new BinaryWriter(stream))
             {
+                writer.Write(chosen);
+                writer.Write(dice[0]);
+                writer.Write(dice[1]);
+                writer.Write(dice[2]);
                 writer.Write(turn);
+
                 var positionData = positions;
                 foreach (var pos in positionData)
                 {
@@ -673,7 +706,12 @@ public class LudoObject
         {
             BinaryReader reader = new BinaryReader(stream);
 
-            reader.ReadInt16();
+            chosen = reader.ReadInt16();
+            dice[0] = reader.ReadInt16();
+            dice[1] = reader.ReadInt16();
+            dice[2] = reader.ReadInt16();
+            turn = reader.ReadInt16();
+
             for (byte i = 0; i < 16; i++)
             {
                 int color = i / 4;
@@ -683,6 +721,8 @@ public class LudoObject
 
             reader.Dispose();
         }
+
+        OnUIUpdate?.Invoke();
     }
 
     public void SetTurn(short _turn)
@@ -703,6 +743,9 @@ public class LudoObject
             return sum == 0;
         }
     }
+
+    public bool hasDice => (dice[0] + dice[1]) > 0;
+    public short[] getDice => dice;
 
     public void TickTimer(float delta)
     {

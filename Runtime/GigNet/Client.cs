@@ -5,19 +5,21 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Net.Http;
 using System.Net.WebSockets;
 using System.Buffers;
 using System.Collections.Generic;
 using System.Text;
 using SimpleJSON;
-using UnityEngine.UIElements;
 using System.Text.Json;
-using UnityEngine;
 
 internal class Client : Agent
 {
+    internal enum PackType
+    {
+        RPC, Heartbeat, Audio, NetEvent, RoomAssign, RoomFilled, JoinRoom, ForceQuit, Rejected, LeftRoom, Ready, Ping
+    }
+
     enum Connection
     {
         NIL, SSE, WS
@@ -41,7 +43,9 @@ internal class Client : Agent
     public Action<int> OnDisconnected;
 
     ConcurrentQueue<Action> actionQueue = new();
-    ConcurrentQueue<byte[]> sendQueue = new();
+
+    readonly ConcurrentQueue<byte[]> sendQueue = new();
+    readonly SemaphoreSlim sendSignal = new(0);
 
     public override void Tick()
     {
@@ -49,7 +53,6 @@ internal class Client : Agent
         {
             action.Invoke();
         }
-        _ = Send();
     }
 
     public override void FixedTick()
@@ -61,7 +64,7 @@ internal class Client : Agent
 
     CancellationTokenSource cts;
 
-    public Client(RPCRouter rPCRouter, string _serverIP, int _port, long userId, long roomId, CancellationToken token)
+    public Client(RPCRouter rPCRouter, string _serverIP, int _port, long userId, long roomId, CancellationToken token, Func<bool> activePredicate)
     {
         GigNet.Status = "Connecting to server...";
 
@@ -92,12 +95,13 @@ internal class Client : Agent
         sseLink = $"http://127.0.0.1:{port}/msg?userId={userId}&roomId={roomId}";
         sseLink = $"https://{serverIP}/{GigNet.gameName}_server/msg?userId={userId}&roomId={roomId}";
 
-        Task.Run(() => StartClientWSConnection(serverIP, port, userId, roomId));
+        Task.Run(() => StartClientWSConnection(serverIP, port, userId, roomId, activePredicate));
+        Task.Run(() => Send());
     }
 
     public static readonly HttpClient errorClient = new();
 
-    async Task StartClientWSConnection(string host, int port, long userId, long roomId)
+    async Task StartClientWSConnection(string host, int port, long userId, long roomId, Func<bool> isActive)
     {
         int retryDelay = 1000;
         int maxRetries = 25;
@@ -110,7 +114,7 @@ internal class Client : Agent
         actionQueue.Enqueue(() =>
         {
             GigNet.Status = "Attempting Websocket Connection...";
-            GigNet.Log?.Invoke("Attempting...(WS)");
+            GigNet.Log?.Invoke($"Attempting...(WS)");
         });
 
         while (attempts < maxRetries && !cts.IsCancellationRequested)
@@ -119,14 +123,25 @@ internal class Client : Agent
 
             try
             {
+                var testCient = new HttpClient();
+                var response = await testCient.GetAsync($"https://{host}/{GigNet.gameName}_server/ws?userId={userId}&roomId={roomId}");
+                if (!response.IsSuccessStatusCode)
+                {
+                    var msg = await response.Content.ReadAsStringAsync();
+                    actionQueue.Enqueue(async () =>
+                    {
+                        GigNet.Status = msg;
+                        GigNet.OnTimeOut?.Invoke(true);
+                    });
+                    continue;
+                }
+
                 var link = $"wss://{host}/{GigNet.gameName}_server/ws?userId={userId}&roomId={roomId}";
 
                 wsClient = new ClientWebSocket();
 
-                using (var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
-                {
-                    await wsClient.ConnectAsync(new Uri(link), connectCts.Token);
-                }
+                var connectCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await wsClient.ConnectAsync(new Uri(link), connectCts.Token);
 
                 actionQueue.Enqueue(() =>
                 {
@@ -142,50 +157,50 @@ internal class Client : Agent
 
                 while (wsClient.State == WebSocketState.Open)
                 {
-                    GigNet.Log("Open");
-
                     WebSocketReceiveResult result;
                     int offset = 0;
 
-                    using (var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                    var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    do
                     {
-                        do
+                        result = await wsClient.ReceiveAsync(
+                            new ArraySegment<byte>(frameBuffer, offset, frameBuffer.Length - offset), cts.Token);
+
+                        if (result.MessageType == WebSocketMessageType.Close)
                         {
-                            result = await wsClient.ReceiveAsync(
-                                new ArraySegment<byte>(frameBuffer, offset, frameBuffer.Length - offset),
-                                cts.Token);
+                            GigNet.Log("Closed");
+                            throw new Exception("Closed");
+                        }
 
-                            if (result.MessageType == WebSocketMessageType.Close)
-                            {
-                                GigNet.Log("Closed");
-                                throw new Exception("Closed");
-                            }
+                        if (result.MessageType != WebSocketMessageType.Binary)
+                        {
+                            GigNet.Log("Non Binary");
+                            throw new Exception("Wrong Data Type");
+                        }
 
-                            if (result.MessageType != WebSocketMessageType.Binary)
-                            {
-                                GigNet.Log("Non Binary");
-                                throw new Exception("Wrong Data Type");
-                            }
+                        offset += result.Count;
 
-                            offset += result.Count;
+                        if (offset >= frameBuffer.Length)
+                            throw new Exception("buffer overflow");
 
-                            if (offset >= frameBuffer.Length)
-                                throw new Exception("");
+                    } while (!result.EndOfMessage);
 
-                        } while (!result.EndOfMessage);
-                    }
                     int payloadOffset = 4;
                     int payloadLength = offset - payloadOffset;
 
-                    if (payloadLength <= 0)
-                        continue;
-
-                    HandlePayload(frameBuffer.AsSpan(payloadOffset, payloadLength).ToArray());
+                    if (payloadLength > 0)
+                        HandlePayload(frameBuffer.AsSpan(payloadOffset, payloadLength).ToArray());
                 }
             }
             catch (Exception ex)
             {
-                GigNet.LogError?.Invoke($"Exception: {ex} \n {ex.Message} \n {ex.InnerException} \n {ex.StackTrace}");
+                actionQueue.Enqueue(() =>
+                {
+                    GigNet.LogError?.Invoke($"Exception: {ex} \n {ex.Message} \n {ex.InnerException} \n {ex.StackTrace}");
+                    GigNet.Status = ex.Message + "\nCheck your internet connection";
+                    GigNet.OnTimeOut.Invoke(true);
+                });
+
                 _ = LogError(ex);
                 GigNet.errors += $"{ex.Message}\n\n";
             }
@@ -201,17 +216,21 @@ internal class Client : Agent
             {
                 GigNet.Log?.Invoke($"Retrying Websocket({attempts}/{maxRetries})");
 
-                GigNet.Status = $"Retrying Websocket({attempts}/{maxRetries})";
+                GigNet.Status = $"Retrying Websocket({attempts}/{maxRetries})\nCheck your internet connection";
 
                 GigNet.OnTimeOut?.Invoke(true);
             });
         }
 
-        await Task.Run(() => StartSSEConnection(host, port, userId, roomId));
-        return;
+        actionQueue.Enqueue(() =>
+        {
+            GigNet.Status = "Connection Lost";
+            GigNet.OnTimeOut?.Invoke(true);
+        });
+        // await StartSSEConnection(host, port, userId, roomId, isActive);
     }
 
-    async Task StartSSEConnection(string host, int port, long userId, long roomId)
+    async Task StartSSEConnection(string host, int port, long userId, long roomId, Func<bool> isActive)
     {
         int retryDelay = 1000;
         int maxRetries = 25;
@@ -242,6 +261,17 @@ internal class Client : Agent
                     request,
                     HttpCompletionOption.ResponseHeadersRead
                 );
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var msg = await response.Content.ReadAsStringAsync();
+                    actionQueue.Enqueue(async () =>
+                    {
+                        GigNet.Status = msg;
+                        GigNet.OnTimeOut?.Invoke(true);
+                    });
+                    continue;
+                }
 
                 GigNet.Log("sent request");
 
@@ -300,7 +330,7 @@ internal class Client : Agent
             {
                 GigNet.Log?.Invoke($"Reconnecting with SSE({attempts}/{maxRetries})");
 
-                GigNet.Status = $"Reconnecting with SSE({attempts}/{maxRetries})";
+                GigNet.Status = $"Reconnecting with SSE({attempts}/{maxRetries})\nCheck your internect connection";
 
                 GigNet.OnTimeOut?.Invoke(true);
             });
@@ -309,7 +339,8 @@ internal class Client : Agent
         connection = Connection.NIL;
         actionQueue.Enqueue(() =>
         {
-            GigNet.OnForceQuit?.Invoke();
+            GigNet.Status = "Unable to get back in game";
+            GigNet.OnTimeOut?.Invoke(true);
         });
     }
 
@@ -323,6 +354,7 @@ internal class Client : Agent
     public override void SendTCPMessage(byte[] data)
     {
         sendQueue.Enqueue(data);
+        sendSignal.Release();
     }
 
     async Task Ping()
@@ -337,40 +369,48 @@ internal class Client : Agent
 
     async Task Send()
     {
-        while (sendQueue.TryDequeue(out var data))
+        while (!cts.IsCancellationRequested)
         {
-            if (connection == Connection.WS)
+            await sendSignal.WaitAsync(cts.Token);
+            while (sendQueue.TryDequeue(out var data))
             {
-                try
-                {
-                    await wsClient?.SendAsync(data, WebSocketMessageType.Binary, true, CancellationToken.None);
-                    OutGoingData += data.Length;
-                }
-                catch (Exception e)
+                if (connection == Connection.WS && wsClient != null && wsClient.State == WebSocketState.Open)
                 {
                     try
                     {
-                        actionQueue.Enqueue(() =>
-                        {
-                            GigNet.Log($"Error pushing Data {e.Message}");
-                        });
-                        wsClient?.CloseAsync(WebSocketCloseStatus.InternalServerError, "SendError", CancellationToken.None);
-                        wsClient = null;
+                        await wsClient?.SendAsync(data, WebSocketMessageType.Binary, true, CancellationToken.None);
+                        OutGoingData += data.Length;
                     }
-                    catch { }
+                    catch (Exception e)
+                    {
+                        try
+                        {
+                            actionQueue.Enqueue(() =>
+                            {
+                                GigNet.Log($"Error pushing Data {e.Message}");
+                            });
+                            wsClient?.CloseAsync(WebSocketCloseStatus.InternalServerError, "SendError", CancellationToken.None);
+                            wsClient = null;
+                        }
+                        catch { }
+                    }
                 }
-            }
-            else if (connection == Connection.SSE)
-            {
-                try
+                else if (connection == Connection.SSE)
                 {
-                    var content = new ByteArrayContent(data);
-                    var response = await sendClient.PostAsync(sseLink, content);
-                    OutGoingData += data.Length;
+                    try
+                    {
+                        var content = new ByteArrayContent(data);
+                        var response = await sendClient.PostAsync(sseLink, content);
+                        OutGoingData += data.Length;
+                    }
+                    catch (Exception e)
+                    {
+                        GigNet.LogError?.Invoke("Error sending packet: " + e.Message);
+                    }
                 }
-                catch (Exception e)
+                else
                 {
-                    GigNet.LogError?.Invoke("Error sending packet: " + e.Message);
+                    await Task.Delay(10);
                 }
             }
         }
@@ -518,6 +558,12 @@ internal class Client : Agent
                         GigNet.OnForceQuit?.Invoke();
                     });
 
+                    break;
+                }
+            case PackType.Ping:
+                {
+                    byte[] pongPack = Util.MergeArrays(BitConverter.GetBytes(12), BitConverter.GetBytes((int)PackType.Ping), BitConverter.GetBytes(DateTimeOffset.UtcNow.Ticks));
+                    SendTCPMessage(pongPack);
                     break;
                 }
             default:
