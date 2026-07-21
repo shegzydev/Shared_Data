@@ -130,12 +130,13 @@ public class GigNet
         gameName = _gameName;
         port = _port;
     }
-    public static void Connect(string url, long roomToConnect, long idToBeAssigned)
+
+    public static void Connect(string url, long roomToConnect, long idToBeAssigned, Func<bool> activePredicate)
     {
 #if CLIENT
         Log($"Connecting with {idToBeAssigned} to room {roomToConnect}");
         cts = new CancellationTokenSource();
-        client = new Client(null, url, port, idToBeAssigned, roomToConnect, cts.Token);
+        client = new Client(null, url, port, idToBeAssigned, roomToConnect, cts.Token, activePredicate);
 #endif
     }
 
@@ -195,7 +196,7 @@ public class GigNet
     {
         // NetworkManager.Instance.RaiseNetworkEvent(id, args);
 
-        var payload = Util.MergeArrays(BitConverter.GetBytes((int)PackType.NetEvent), new byte[0], new byte[1] { id }, args);
+        var payload = Util.MergeArrays(BitConverter.GetBytes((int)Client.PackType.NetEvent), new byte[0], new byte[1] { id }, args);
         var length = payload.Length;
         var finalPayload = Util.MergeArrays(BitConverter.GetBytes(length), payload);
 
@@ -210,7 +211,7 @@ public class GigNet
 
     public static void NotifyReady()
     {
-        var payload = Util.MergeArrays(BitConverter.GetBytes((int)PackType.Ready), new byte[0]);
+        var payload = Util.MergeArrays(BitConverter.GetBytes((int)Client.PackType.Ready), new byte[0]);
         var length = payload.Length;
         var finalPayload = Util.MergeArrays(BitConverter.GetBytes(length), payload);
 

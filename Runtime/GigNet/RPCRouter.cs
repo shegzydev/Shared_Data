@@ -12,6 +12,7 @@ public class RpcAttribute : Attribute
 
 internal class RPCRouter
 {
+    /*
     private Dictionary<int, NetworkObject> _objects = new();
 
     public void RegisterObject(NetworkObject obj)
@@ -47,4 +48,5 @@ internal class RPCRouter
             GigNet.LogError?.Invoke($"Captured Exception {e.InnerException.Message}:{e.InnerException.InnerException.Message}:{e.InnerException.InnerException.InnerException.Message}");
         }
     }
+    */
 }
