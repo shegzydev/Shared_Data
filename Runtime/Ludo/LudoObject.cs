@@ -478,7 +478,7 @@ public class LudoObject
             if (turn != curr_turn) continue;
             var piece = gamePieces[(color)(i / 4)][i % 4];
 
-            if (piece.pos > -1 && piece.pos < 56 && dice.Any(x => x + piece.pos <= 56))
+            if (piece.pos > -1 && piece.pos < 56 && dice.Any(x => x > 0 && (x + piece.pos <= 56)))
             {
                 pawnInPlay = true;
             }
