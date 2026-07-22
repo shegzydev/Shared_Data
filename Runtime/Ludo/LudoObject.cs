@@ -174,6 +174,7 @@ public class LudoObject
     short[] dice = new short[3];
     short chosen = -1;
     bool doubleSix = false;
+
     public async void Roll(Action<(int a, int b)> OnRoll = null)
     {
         OnSpinDice?.Invoke();
