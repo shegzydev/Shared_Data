@@ -502,6 +502,7 @@ public class LudoObject
         if (value == 0 || pos >= 56) return false;
         if (pos == -1) return value == 6 && !isCombo;
         if (pos + value > 56) return false;
+        if (pos + value == 56 && pos < 51) return false;
         return true;
     }
 

@@ -134,6 +134,7 @@ public class LudoMoveSpoofer
         if (pos >= 56) return false;               // already home
         if (pos == -1) return steps == 6 && !isCombo; // only a solo 6 brings a piece out
         if (pos + steps > 56) return false;
+        if (pos + steps == 56 && pos < 51) return false;
         return true;
     }
 
