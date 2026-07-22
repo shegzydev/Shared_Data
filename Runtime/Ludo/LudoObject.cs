@@ -49,10 +49,10 @@ public class LudoObject
             }
             else
             {
-                for (int i = 0; i < steps; i++)
+                if (pos + steps <= 56)
                 {
-                    if (!Move()) break;
-                    count++;
+                    pos += steps;
+                    count = steps;
                 }
             }
 
@@ -147,7 +147,7 @@ public class LudoObject
         ludoMoveSpoofer = new LudoMoveSpoofer[numPlayers];
         for (int i = 0; i < ludoMoveSpoofer.Length; i++)
         {
-            ludoMoveSpoofer[i] = new LudoMoveSpoofer();
+            ludoMoveSpoofer[i] = new LudoMoveSpoofer(2, 10);
         }
     }
 
@@ -469,7 +469,7 @@ public class LudoObject
             if (turn != curr_turn) continue;
             var piece = gamePieces[(color)(i / 4)][i % 4];
 
-            if (piece.pos > -1 && piece.pos < 56)
+            if (piece.pos > -1 && piece.pos < 56 && dice.Any(x => x + piece.pos <= 56))
             {
                 pawnInPlay = true;
             }
@@ -502,6 +502,7 @@ public class LudoObject
     {
         if (value == 0 || pos >= 56) return false;
         if (pos == -1) return value == 6 && !isCombo;
+        if (pos + value > 56) return false;
         return true;
     }
 

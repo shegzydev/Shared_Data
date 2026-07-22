@@ -5,23 +5,23 @@ using System.Linq;
 public class LudoMoveSpoofer
 {
     bool findKill = false;
+    bool foundKill = false;
 
     private readonly GuaranteedRoller guaranteedRoller;
     private readonly Random rng;
+    private color lastColor;
 
     public int RigThreshold { get; set; } = 95;
 
-    public LudoMoveSpoofer() : this(new Random()) { }
-
-    public LudoMoveSpoofer(Random rng)
+    public LudoMoveSpoofer(int hitsPerBatch, int batchSize)
     {
-        this.rng = rng ?? throw new ArgumentNullException(nameof(rng));
-        guaranteedRoller = new GuaranteedRoller(1, 5);
+        rng = new Random();
+        guaranteedRoller = new GuaranteedRoller(hitsPerBatch, batchSize);
     }
 
     public bool TryGetAdvantageousRoll(LudoObject game, int turnIndex, out short a, out short b)
     {
-        findKill = guaranteedRoller.Roll();
+        foundKill = false;
 
         var numPlayers = game.playerCount;
         var positions = game.positions;
@@ -84,11 +84,23 @@ public class LudoMoveSpoofer
         return false;
     }
 
-    // (short diceIndex, short pieceIndex)? ChooseBestMove()
-    // {
-    //     var best = BestMoveFor(localDice, game.positions);
-    //     return best == null ? null : (best.Value.diceIndex, best.Value.pieceIndex);
-    // }
+    public (short diceIndex, short pieceIndex)? ChooseBestMove(LudoObject game, int turnIndex, short[] localDice)
+    {
+        foundKill = false;
+
+        int numPlayers = game.playerCount;
+
+        var OwnedColors = new List<color>();
+        for (short c = 0; c < 4; c++)
+        {
+            if (c % numPlayers == turnIndex % numPlayers) OwnedColors.Add((color)c);
+        }
+
+        var best = BestMoveFor(localDice, game.positions, OwnedColors);
+
+        if (best != null) lastColor = (color)(best.Value.pieceIndex / 4);
+        return best == null ? null : (best.Value.diceIndex, best.Value.pieceIndex);
+    }
 
     private (short diceIndex, short pieceIndex, int score)? BestMoveFor(short[] dice, short[] positions, List<color> OwnedColors)
     {
@@ -109,6 +121,8 @@ public class LudoMoveSpoofer
                     if (!CanMove(pos, steps, isCombo: d == 2)) continue;
 
                     int score = ScoreMove(pos, steps, positions, ownedColor, OwnedColors);
+                    score = (int)(score * (ownedColor == lastColor ? 1f : 1.4f));
+
                     candidates.Add((d, (short)(baseIndex + p), score));
                 }
             }
@@ -123,6 +137,7 @@ public class LudoMoveSpoofer
     {
         if (pos >= 56) return false;               // already home
         if (pos == -1) return steps == 6 && !isCombo; // only a solo 6 brings a piece out
+        if (pos + steps > 56) return false;
         return true;
     }
 
@@ -130,7 +145,12 @@ public class LudoMoveSpoofer
     {
         short dest = pos == -1 ? (short)0 : (short)Math.Min(pos + steps, 56);
 
-        int score = (dest - Math.Max(pos, (short)0)) * 2; // reward raw progress
+        int score = pos < 51 ? ((dest - Math.Max(pos, (short)0)) * 10) : 0; // reward raw progress
+
+        if (pos < 51 && dest > pos)
+        {
+            score += dest * 2;
+        }
 
         if (pos == -1)
         {
@@ -140,14 +160,31 @@ public class LudoMoveSpoofer
             var activeOwnedPieces = CountActiveOwnedPieces(allPositions, OwnedColors);
             score += Math.Max(3 - activeOwnedPieces, 0) * 15;
         }
-        if (dest >= 56) score += 100;              // reaching home
-        else if (dest >= 51) score += 30;          // reaching the safe home stretch
+
+        if (dest >= 56)
+        {
+            score += (pos >= 51) ? 15 : 100;
+        }  // reaching home
+        else if (dest >= 51)
+        {
+            score += (pos >= 51) ? 10 : 30;
+        }// reaching the safe home stretch
 
         if (dest < 51 && CapturesOpponent(dest, pieceColor, allPositions, OwnedColors))
-            score += (findKill ? 250 : 10);
+        {
+            if (!foundKill) { findKill = guaranteedRoller.Roll(); foundKill = true; }
+            score += findKill ? 250 : 10;
+        }
 
-        if (pos >= 0 && pos < 51 && IsExposed(pos, pieceColor, allPositions, OwnedColors))
+        if (pos >= 0 && pos < 51 && IsExposed(pos, pieceColor, allPositions, OwnedColors, out int gap0))
+        {
             score += 150; // mild bonus for moving a piece that's currently sitting in capture range
+        }
+
+        if (dest >= 0 && dest < 51 && IsExposed(dest, pieceColor, allPositions, OwnedColors, out int gap1))
+        {
+            score -= 100 * (12 - gap1);
+        }
 
         return score;
     }
@@ -185,11 +222,12 @@ public class LudoMoveSpoofer
         return false;
     }
 
-    private bool IsExposed(short pos, color pieceColor, short[] allPositions, List<color> OwnedColors)
+    private bool IsExposed(short pos, color pieceColor, short[] allPositions, List<color> OwnedColors, out int gap)
     {
-        // Rough heuristic: any opponent piece within 6 tiles behind us on the shared path
+        // Rough heuristic: any opponent piece within 12 tiles behind us on the shared path
         // could capture us on their next roll.
         short myAbs = AbsolutePos(pos, pieceColor);
+        gap = 0;
 
         for (int i = 0; i < allPositions.Length; i++)
         {
@@ -200,8 +238,8 @@ public class LudoMoveSpoofer
             if (oppPos == -1 || oppPos >= 51) continue;
 
             short oppAbs = AbsolutePos(oppPos, otherColor);
-            int gap = (myAbs - oppAbs + 52) % 52;
-            if (gap > 0 && gap <= 6) return true;
+            gap = (myAbs - oppAbs + 52) % 52;
+            if (gap > 0 && gap <= 12) return true;
         }
 
         return false;
