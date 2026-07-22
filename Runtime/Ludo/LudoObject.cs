@@ -137,17 +137,17 @@ public class LudoObject
 
     Random rand = new Random();
 
-    LudoMoveSpoofer[] ludoMoveSpoofer;
+    LudoMoveEvaluator[] ludoMoveSpoofer;
 
     public LudoObject(short numPlayers)
     {
         this.numPlayers = numPlayers;
         sixStreak = new int[numPlayers];
 
-        ludoMoveSpoofer = new LudoMoveSpoofer[numPlayers];
+        ludoMoveSpoofer = new LudoMoveEvaluator[numPlayers];
         for (int i = 0; i < ludoMoveSpoofer.Length; i++)
         {
-            ludoMoveSpoofer[i] = new LudoMoveSpoofer(2, 10);
+            ludoMoveSpoofer[i] = new LudoMoveEvaluator(2, 10);
         }
     }
 
@@ -182,7 +182,7 @@ public class LudoObject
 
         await Task.Delay(500);
 
-        if (ludoMoveSpoofer[turn].TryGetAdvantageousRoll(this, turn, out var a, out var b))
+        if (ludoMoveSpoofer[turn].TryGoodRoll(this, turn, out var a, out var b))
         {
             dice[0] = a;
             dice[1] = b;
@@ -514,7 +514,6 @@ public class LudoObject
         if (value == 0 || pos >= 56) return false;
         if (pos == -1) return value == 6 && !isCombo;
         if (pos + value > 56) return false;
-        if (pos + value == 56 && pos < 51) return false;
         return true;
     }
 
