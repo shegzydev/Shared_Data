@@ -325,7 +325,7 @@ public class LudoObject
         if (chosen < 2 && dice[1 - chosen] > 0)
         {
             var avail = numTurnPawnsInPlay(out var inPlay);
-            if (avail == 1)
+            if (avail == 1 && inPlay[0].obj == piece)
             {
                 if (!(dice[1 - chosen] == 6 && numTurnPawnsInHome(out var _) > 0))
                 {
@@ -349,7 +349,6 @@ public class LudoObject
                 else
                 {
                     noneLeft = true;
-                    dice = new short[3] { 0, 0, 0 };
                 }
             }
         }
@@ -396,6 +395,8 @@ public class LudoObject
             turn++;
             doubleStreak = 0;
         }
+
+        dice = new short[3] { 0, 0, 0 };
         turn %= numPlayers;
         OnTurnsSwitch?.Invoke(turn);
     }

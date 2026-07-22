@@ -164,7 +164,7 @@ public class LudoMoveSpoofer
 
         if (dest >= 56)
         {
-            score += (pos >= 51) ? 15 : 100;
+            score += (pos >= 51) ? 15 : 1000;
         }  // reaching home
         else if (dest >= 51)
         {
@@ -174,7 +174,7 @@ public class LudoMoveSpoofer
         if (dest < 51 && CapturesOpponent(dest, pieceColor, allPositions, OwnedColors))
         {
             if (!foundKill) { findKill = guaranteedRoller.Roll(); foundKill = true; }
-            score += findKill ? 250 : 10;
+            score += findKill ? 2500 : 10;
         }
 
         if (pos >= 0 && pos < 51 && IsExposed(pos, pieceColor, allPositions, OwnedColors, out int gap0))
