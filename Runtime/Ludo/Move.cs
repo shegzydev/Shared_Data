@@ -184,7 +184,7 @@ public class LudoMoveSpoofer
 
         if (dest >= 0 && dest < 51 && IsExposed(dest, pieceColor, allPositions, OwnedColors, out int gap1))
         {
-            score -= 100 * (12 - gap1);
+            score -= 1000 * (12 - gap1);
         }
 
         return score;
@@ -236,11 +236,21 @@ public class LudoMoveSpoofer
             if (OwnedColors.Contains(otherColor)) continue;
 
             short oppPos = allPositions[i];
-            if (oppPos == -1 || oppPos >= 51) continue;
+            if (oppPos >= 51) continue;
 
-            short oppAbs = AbsolutePos(oppPos, otherColor);
-            gap = (myAbs - oppAbs + 52) % 52;
-            if (gap > 0 && gap <= 12) return true;
+            if (oppPos >= 0)
+            {
+                short oppAbs = AbsolutePos(oppPos, otherColor);
+                gap = (myAbs - oppAbs + 52) % 52;
+                if (gap > 0 && gap <= 12) return true;
+            }
+            else if (oppPos < 0)
+            {
+                oppPos = 0;
+                short oppAbs = AbsolutePos(oppPos, otherColor);
+                gap = (myAbs - oppAbs + 52) % 52;
+                if (gap >= 0 && gap <= 12) return true;
+            }
         }
 
         return false;

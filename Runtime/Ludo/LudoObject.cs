@@ -342,7 +342,15 @@ public class LudoObject
             }
             else if (avail == 0)
             {
-                noneLeft = true;
+                if (dice[1 - chosen] == 6 && numTurnPawnsInHome(out var _) > 0)
+                {
+
+                }
+                else
+                {
+                    noneLeft = true;
+                    dice = new short[3] { 0, 0, 0 };
+                }
             }
         }
 
