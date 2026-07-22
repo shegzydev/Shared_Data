@@ -184,7 +184,7 @@ public class LudoMoveSpoofer
 
         if (dest >= 0 && dest < 51 && IsExposed(dest, pieceColor, allPositions, OwnedColors, out int gap1))
         {
-            score -= 1000 * (12 - gap1);
+            score -= 10 * (12 - gap1);
         }
 
         return score;

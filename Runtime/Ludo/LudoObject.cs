@@ -221,7 +221,7 @@ public class LudoObject
             return;
         }
 
-        if (!MoveAvailableOnRoll()) SkipTurn();
+        if (!MoveAvailable()) SkipTurn();
 
         if (numTurnPawnsInPlay(out var inPlay) == 1)
         {
@@ -268,7 +268,7 @@ public class LudoObject
             return;
         }
 
-        if (!MoveAvailableOnRoll()) SkipTurn();
+        if (!MoveAvailable()) SkipTurn();
 
         if (numTurnPawnsInPlay(out var inPlay) == 1)
         {
@@ -376,7 +376,7 @@ public class LudoObject
             OnEndGame?.Invoke(turn);
         }
 
-        if (TurnEnded || noneLeft)
+        if (TurnEnded || noneLeft || !MoveAvailable())
         {
             NextTurn();
             doubleSix = false;
@@ -467,7 +467,7 @@ public class LudoObject
         return pawnsInHome;
     }
 
-    bool MoveAvailableOnRoll()
+    bool MoveAvailable()
     {
         bool pawnInPlay = false;
         bool pawnInHome = false;
@@ -491,6 +491,8 @@ public class LudoObject
         for (int i = 0; i < 3; i++)
         {
             var val = dice[i];
+            if (val == 0) continue;
+
             if (i < 2)
             {
                 if (val < 6 && pawnInPlay) return true;
