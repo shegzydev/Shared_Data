@@ -147,7 +147,7 @@ public class LudoObject
         ludoMoveSpoofer = new LudoMoveEvaluator[numPlayers];
         for (int i = 0; i < ludoMoveSpoofer.Length; i++)
         {
-            ludoMoveSpoofer[i] = new LudoMoveEvaluator(2, 10);
+            ludoMoveSpoofer[i] = new LudoMoveEvaluator(this, true);
         }
     }
 
@@ -182,7 +182,7 @@ public class LudoObject
 
         await Task.Delay(500);
 
-        if (ludoMoveSpoofer[turn].TryGoodRoll(this, turn, out var a, out var b))
+        if (ludoMoveSpoofer[turn].TryGoodRoll(turn, out var a, out var b))
         {
             dice[0] = a;
             dice[1] = b;
@@ -423,6 +423,37 @@ public class LudoObject
         }
 
         return done == ((numPlayers == 2) ? 8 : 4);
+    }
+
+    public bool Ahead(int player)
+    {
+        int[] scores = new int[numPlayers];
+
+        for (int i = 0; i < 16; i++)
+        {
+            short curr_turn = (short)((i / 4) % numPlayers);
+            scores[curr_turn] += (gamePieces[(color)(i / 4)][i % 4].pos == 56) ? 1 : 0;
+        }
+
+        int highest = -1;
+        int winner = -1;
+        bool tied = false;
+
+        for (int i = 0; i < scores.Length; i++)
+        {
+            if (scores[i] > highest)
+            {
+                highest = scores[i];
+                winner = i;
+                tied = false;
+            }
+            else if (scores[i] == highest)
+            {
+                tied = true;
+            }
+        }
+
+        return !tied && winner == player;
     }
 
     int numTurnPawnsInPlay(out List<(PieceObject obj, int index)> availablePieces)

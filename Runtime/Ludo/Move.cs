@@ -1,29 +1,29 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 
-/*public class LudoMoveEvaluator
+public class LudoMoveEvaluator
 {
-    bool findKill = false;
-    bool foundKill = false;
-
     private readonly PercentageWeightedRandom killChecker;
-    private readonly PercentageWeightedRandom homeChecker;
+    private readonly PercentageWeightedRandom rigGate;
     private readonly Random rng;
     private color lastColor;
 
     public int RigThreshold { get; set; } = 95;
+    LudoObject game;
 
-    public LudoMoveEvaluator(int hitsPerBatch, int batchSize)
+    public LudoMoveEvaluator(LudoObject _game, bool isMinimizing = false)
     {
+        game = _game;
         rng = new Random();
-        killChecker = new PercentageWeightedRandom(hitsPerBatch, batchSize);
-        homeChecker = new PercentageWeightedRandom(2, 10);
+        killChecker = new PercentageWeightedRandom(isMinimizing ? 3 : 7, 10);
+        rigGate = new PercentageWeightedRandom(isMinimizing ? 3 : 7, 10);
     }
 
-    public bool TryGoodRoll(LudoObject game, int turnIndex, out short a, out short b)
+    public bool TryGoodRoll(int turnIndex, out short a, out short b)
     {
-        foundKill = false;
+        Stopwatch stopwatch = Stopwatch.StartNew();
 
         var numPlayers = game.playerCount;
         var positions = game.positions;
@@ -42,8 +42,25 @@ using System.Linq;
                 var pos = positions[baseIndex + p];
                 if (pos >= 0 && pos < 56) return true;
             }
+
             return false;
         });
+
+        if (!anyOnBoard)
+        {
+            if (rng.NextDouble() > 0.5f)
+            {
+                a = 6;
+                b = (short)rng.Next(1, 7);
+            }
+            else
+            {
+                b = 6;
+                a = (short)rng.Next(1, 7);
+            }
+
+            return true;
+        }
 
         short bestA = 1, bestB = 1;
         int bestScore = int.MinValue;
@@ -53,43 +70,59 @@ using System.Linq;
             for (short db = 1; db <= 6; db++)
             {
                 short[] candidateDice = { da, db, (short)(da + db) };
-                var best = BestMoveFor(candidateDice, positions, OwnedColors);
-                int score = best?.score ?? int.MinValue;
 
-                if (score > bestScore)
+                var ranked = RankedMovesFor(candidateDice, positions, OwnedColors);
+                if (ranked != null && ranked.Count > 0)
                 {
-                    bestScore = score;
-                    bestA = da;
-                    bestB = db;
+                    var best = ranked[0];
+                    if (best != null)
+                    {
+                        bool finishing = isFinishingMove(candidateDice[best.Value.diceIndex], best.Value.pieceIndex, OwnedColors);
+                        if (finishing && !killChecker.CheckTrue() && ranked.Count > 1)
+                        {
+                            int i = 1;
+                            do
+                            {
+                                if (i >= ranked.Count) break;
+                                best = ranked[i++];
+                            } while (best == null || isFinishingMove(candidateDice[best.Value.diceIndex], best.Value.pieceIndex, OwnedColors));
+                        }
+
+                        int score = best?.score ?? int.MinValue;
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            bestA = da;
+                            bestB = db;
+                        }
+                    }
                 }
             }
         }
 
-        if (bestScore >= RigThreshold)
+        if (rigGate.CheckTrue() && !game.Ahead(turnIndex))
         {
             a = bestA;
             b = bestB;
-            return true;
         }
-
-        if (!anyOnBoard)
+        else
         {
-            // Nothing in play yet - nudge a single 6 to get started, but let the other die
-            // land naturally rather than forcing a double.
-            a = 6;
-            b = (short)rng.Next(1, 7);
-            return true;
+            do
+            {
+                a = (short)rng.Next(1, 7);
+            } while (a == 0 || a == bestA);
+
+            do
+            {
+                b = (short)rng.Next(1, 7);
+            } while (b == 0 || b == bestB);
         }
 
-        a = 0;
-        b = 0;
-        return false;
+        return true;
     }
 
-    public (short diceIndex, short pieceIndex)? ChooseBestMove(LudoObject game, int turnIndex, short[] localDice)
+    public (short diceIndex, short pieceIndex)? ChooseBestMove(int turnIndex, short[] localDice)
     {
-        foundKill = false;
-
         int numPlayers = game.playerCount;
 
         var OwnedColors = new List<color>();
@@ -99,9 +132,23 @@ using System.Linq;
         }
 
         var best = BestMoveFor(localDice, game.positions, OwnedColors);
+        if (best == null) return null;
 
-        if (best != null) lastColor = (color)(best.Value.pieceIndex / 4);
-        return best == null ? null : (best.Value.diceIndex, best.Value.pieceIndex);
+        lastColor = (color)(best.Value.pieceIndex / 4);
+        return (best.Value.diceIndex, best.Value.pieceIndex);
+    }
+
+    public bool isFinishingMove(short steps, short pieceIndex, List<color> ownedColors)
+    {
+        var pos = game.positions[pieceIndex];
+        var dest = pos == -1 ? (short)0 : (short)(pos + steps);
+
+        if (dest == 56 || CapturesOpponent(dest, (color)(pieceIndex / 4), game.positions, ownedColors))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private (short diceIndex, short pieceIndex, int score)? BestMoveFor(short[] dice, short[] positions, List<color> OwnedColors)
@@ -135,6 +182,35 @@ using System.Linq;
         return candidates.OrderByDescending(c => c.score).First();
     }
 
+    private List<(short diceIndex, short pieceIndex, int score)?> RankedMovesFor(short[] dice, short[] positions, List<color> OwnedColors)
+    {
+        var candidates = new List<(short diceIndex, short pieceIndex, int score)?>();
+
+        foreach (var ownedColor in OwnedColors)
+        {
+            int baseIndex = (int)ownedColor * 4;
+
+            for (short d = 0; d < 3; d++)
+            {
+                short steps = dice[d];
+                if (steps == 0) continue;
+
+                for (short p = 0; p < 4; p++)
+                {
+                    short pos = positions[baseIndex + p];
+                    if (!CanMove(pos, steps, isCombo: d == 2)) continue;
+
+                    int score = ScoreMove(pos, steps, positions, ownedColor, OwnedColors);
+                    score = (int)(score * (ownedColor == lastColor ? 1f : 1.2f));
+
+                    candidates.Add((d, (short)(baseIndex + p), score));
+                }
+            }
+        }
+
+        return candidates.OrderByDescending(c => c.Value.score).ToList();
+    }
+
     private bool CanMove(short pos, short steps, bool isCombo)
     {
         if (pos >= 56) return false;               // already home
@@ -166,7 +242,7 @@ using System.Linq;
 
         if (dest >= 56)
         {
-            score += homeChecker.CheckTrue() ? 2000 : 0;
+            score += 2000;
         }  // reaching home
         else if (dest >= 51)
         {
@@ -180,8 +256,7 @@ using System.Linq;
 
         if (dest < 51 && CapturesOpponent(dest, pieceColor, allPositions, OwnedColors))
         {
-            if (!foundKill) { findKill = killChecker.CheckTrue(); foundKill = true; }
-            score += findKill ? 2500 : 10;
+            score += 2500;
         }
         else
         {
@@ -278,9 +353,7 @@ using System.Linq;
             if (OwnedColors.Contains(otherColor)) continue;
 
             short oppPos = allPositions[i];
-            if (oppPos >= 51) continue;
-
-            if (oppPos == -1) oppPos = 0;
+            if (oppPos == -1 || oppPos >= 51) continue;
 
             short oppAbs = AbsolutePos(oppPos, otherColor);
             gap = ((oppAbs + 52) - myAbs) % 52;
@@ -295,8 +368,8 @@ using System.Linq;
         return (short)((pos + 1 + (short)col * 13) % 52);
     }
 }
-*/
 
+/*
 public class LudoMoveEvaluator
 {
     private readonly PercentageWeightedRandom killChecker;
@@ -305,24 +378,28 @@ public class LudoMoveEvaluator
     private readonly PercentageWeightedRandom mistakeChecker;
     private readonly Random rng;
     private color lastColor;
+    bool isMinimizing = false;
 
     public int RigThreshold { get; set; } = 95;
 
-    public LudoMoveEvaluator(int hitsPerBatch, int batchSize)
+    public LudoMoveEvaluator(int hitsPerBatch, int batchSize, bool minimizingplayer = false)
     {
+        isMinimizing = minimizingplayer;
         rng = new Random();
         killChecker = new PercentageWeightedRandom(hitsPerBatch, batchSize);
         homeChecker = new PercentageWeightedRandom(2, 10);
-        // Even when a "rig-worthy" roll exists, don't always take it - let good
-        // rolls look like luck rather than a guarantee. ~70% of eligible turns.
-        rigGateChecker = new PercentageWeightedRandom(7, 10);
-        // Small chance to play the runner-up move instead of the strict best,
-        // so the bot doesn't read as mechanically perfect every single turn.
-        mistakeChecker = new PercentageWeightedRandom(1, 10);
+        rigGateChecker = new PercentageWeightedRandom(isMinimizing ? 3 : 6, 10);
+        mistakeChecker = new PercentageWeightedRandom(isMinimizing ? 8 : 5, 10);
     }
 
     public bool TryGoodRoll(LudoObject game, int turnIndex, out short a, out short b)
     {
+        if (game.Ahead(turnIndex))
+        {
+            a = b = 0;
+            return false;
+        }
+
         var numPlayers = game.playerCount;
         var positions = game.positions;
 
@@ -342,6 +419,15 @@ public class LudoMoveEvaluator
             }
             return false;
         });
+
+        if (!anyOnBoard)
+        {
+            // Nothing in play yet - nudge a single 6 to get started, but let the other die
+            // land naturally rather than forcing a double.
+            a = 6;
+            b = (short)rng.Next(1, 7);
+            return true;
+        }
 
         short bestA = 1, bestB = 1;
         int bestScore = int.MinValue;
@@ -368,27 +454,34 @@ public class LudoMoveEvaluator
             }
         }
 
-        // Being eligible to rig isn't the same as rigging: only follow through
-        // some of the time so favorable rolls don't show up like clockwork.
-        if (bestScore >= RigThreshold && rigGateChecker.CheckTrue())
+        if (rigGateChecker.CheckTrue())
         {
             a = bestA;
             b = bestB;
-            return true;
-        }
 
-        if (!anyOnBoard)
+            if (isMinimizing)
+            {
+                a += (short)rng.Next(-1, 1);
+                b += (short)rng.Next(-1, 1);
+            }
+
+            a = Math.Clamp(a, (short)1, (short)6);
+            b = Math.Clamp(b, (short)1, (short)6);
+        }
+        else
         {
-            // Nothing in play yet - nudge a single 6 to get started, but let the other die
-            // land naturally rather than forcing a double.
-            a = 6;
-            b = (short)rng.Next(1, 7);
-            return true;
+            do
+            {
+                a = (short)rng.Next(1, 7);
+            } while (a == 0 || a == bestA);
+
+            do
+            {
+                b = (short)rng.Next(1, 7);
+            } while (b == 0 || b == bestB);
         }
 
-        a = 0;
-        b = 0;
-        return false;
+        return true;
     }
 
     public (short diceIndex, short pieceIndex)? ChooseBestMove(LudoObject game, int turnIndex, short[] localDice)
@@ -405,8 +498,10 @@ public class LudoMoveEvaluator
         // gets decided for real here (once per call - see BestMoveFor).
         var best = BestMoveForWithMistake(localDice, game.positions, OwnedColors);
 
-        if (best != null) lastColor = (color)(best.Value.pieceIndex / 4);
-        return best == null ? null : (best.Value.diceIndex, best.Value.pieceIndex);
+        if (best == null) return null;
+
+        lastColor = (color)(best.Value.pieceIndex / 4);
+        return (best.Value.diceIndex, best.Value.pieceIndex);
     }
 
     private (short diceIndex, short pieceIndex, int score)? BestMoveForWithMistake(
@@ -520,7 +615,7 @@ public class LudoMoveEvaluator
                 if (!homeDecided) { homeFavored = homeChecker.CheckTrue(); homeDecided = true; }
                 homeSucceeds = homeFavored;
             }
-            score += homeSucceeds ? 2000 : 0;
+            score += homeSucceeds ? 3000 : 0;
         }
         else if (dest >= 51)
         {
@@ -546,7 +641,7 @@ public class LudoMoveEvaluator
                 if (!killDecided) { killFavored = killChecker.CheckTrue(); killDecided = true; }
                 willKill = killFavored;
             }
-            score += willKill ? 2500 : 10;
+            score += willKill ? 3500 : 10;
         }
         else
         {
@@ -557,7 +652,7 @@ public class LudoMoveEvaluator
 
             if (dest >= 0 && dest < 51 && behindOpponent(dest, pieceColor, allPositions, OwnedColors, out int closeGap))
             {
-                score += 20 * (12 - closeGap);
+                score += 50 * (12 - closeGap);
             }
         }
 
@@ -650,7 +745,7 @@ public class LudoMoveEvaluator
     {
         return (short)((pos + 1 + (short)col * 13) % 52);
     }
-}
+}*/
 
 public class PercentageWeightedRandom
 {
