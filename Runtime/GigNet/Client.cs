@@ -130,6 +130,7 @@ internal class Client : Agent
                     var msg = await response.Content.ReadAsStringAsync();
                     actionQueue.Enqueue(async () =>
                     {
+                        if (msg.Contains("502")) msg = "Server Unreachable";
                         GigNet.Status = msg;
                         GigNet.OnTimeOut?.Invoke(true);
                     });
@@ -197,7 +198,12 @@ internal class Client : Agent
                 actionQueue.Enqueue(() =>
                 {
                     GigNet.LogError?.Invoke($"Exception: {ex} \n {ex.Message} \n {ex.InnerException} \n {ex.StackTrace}");
-                    GigNet.Status = ex.Message + "\nCheck your internet connection";
+
+                    var message = ex.Message.ToLower();
+                    if (message.Contains("502")) message = "Server Unreachable";
+                    if (message.Contains("remote")) message = "Connection Lost";
+
+                    GigNet.Status = message + "\nCheck your internet connection";
                     GigNet.OnTimeOut.Invoke(true);
                 });
 

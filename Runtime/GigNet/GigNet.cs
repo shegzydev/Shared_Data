@@ -134,7 +134,7 @@ public class GigNet
     public static void Connect(string url, long roomToConnect, long idToBeAssigned, Func<bool> activePredicate)
     {
 #if CLIENT
-        Log($"Connecting with {idToBeAssigned} to room {roomToConnect}");
+        Log?.Invoke($"Connecting with {idToBeAssigned} to room {roomToConnect}");
         cts = new CancellationTokenSource();
         client = new Client(null, url, port, idToBeAssigned, roomToConnect, cts.Token, activePredicate);
 #endif
