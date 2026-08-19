@@ -221,6 +221,7 @@ public class Snooker
         }
 
         edges = new Edge[wallPoints.Length + railPoints.Length];
+
         for (int i = 0; i < wallPoints.Length; i++)
         {
             var p1 = wallPoints[i];
@@ -432,12 +433,10 @@ public class Snooker
         for (int i = 0; i < balls.Length; i++)
         {
             Ball a = balls[i];
-            if (a.potted) continue;
 
             for (int j = i + 1; j < balls.Length; j++)
             {
                 Ball b = balls[j];
-                if (b.potted) continue;
 
                 if (GetTimeOfImpactBall(a, b, out sfloat toi) && toi < dt)
                 {
@@ -455,7 +454,6 @@ public class Snooker
         for (int i = 0; i < balls.Length; i++)
         {
             Ball a = balls[i];
-            if (a.potted) continue;
 
             for (int j = 0; j < edges.Length; j++)
             {
