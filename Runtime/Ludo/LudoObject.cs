@@ -373,19 +373,22 @@ public class LudoObject
 
         if (GameOver())
         {
+            OnStateUpdate?.Invoke(BitConverter.GetBytes(steps).Concat(GetState()).ToArray());
             OnEndGame?.Invoke(turn);
         }
-
-        if (TurnEnded || noneLeft || !MoveAvailable())
+        else
         {
-            NextTurn();
-            doubleSix = false;
+            if (TurnEnded || noneLeft || !MoveAvailable())
+            {
+                NextTurn();
+                doubleSix = false;
+            }
+
+            chosen = -1;
+            timer = 20;
+
+            OnStateUpdate?.Invoke(BitConverter.GetBytes(steps).Concat(GetState()).ToArray());
         }
-
-        chosen = -1;
-        timer = 20;
-
-        OnStateUpdate?.Invoke(BitConverter.GetBytes(steps).Concat(GetState()).ToArray());
     }
 
     void NextTurn()
@@ -425,9 +428,10 @@ public class LudoObject
         return done == ((numPlayers == 2) ? 8 : 4);
     }
 
-    public bool Ahead(int player)
+    public bool Ahead(int player, out int score)
     {
         int[] scores = new int[numPlayers];
+        score = 0;
 
         for (int i = 0; i < 16; i++)
         {
@@ -452,6 +456,8 @@ public class LudoObject
                 tied = true;
             }
         }
+
+        score = scores[player];
 
         return !tied && winner == player;
     }

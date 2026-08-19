@@ -9,6 +9,7 @@ public class LudoMoveEvaluator
     private readonly PercentageWeightedRandom rigGate;
     private readonly Random rng;
     private color lastColor;
+    int maxWinCount = 8;
 
     public int RigThreshold { get; set; } = 95;
     LudoObject game;
@@ -19,12 +20,13 @@ public class LudoMoveEvaluator
         rng = new Random();
         killChecker = new PercentageWeightedRandom(isMinimizing ? 3 : 7, 10);
         rigGate = new PercentageWeightedRandom(isMinimizing ? 3 : 7, 10);
+
+        maxWinCount = isMinimizing ? 3 : 4;
+        maxWinCount = maxWinCount * (game.playerCount == 2 ? 2 : 1);
     }
 
     public bool TryGoodRoll(int turnIndex, out short a, out short b)
     {
-        Stopwatch stopwatch = Stopwatch.StartNew();
-
         var numPlayers = game.playerCount;
         var positions = game.positions;
 
@@ -86,6 +88,11 @@ public class LudoMoveEvaluator
                                 if (i >= ranked.Count) break;
                                 best = ranked[i++];
                             } while (best == null || isFinishingMove(candidateDice[best.Value.diceIndex], best.Value.pieceIndex, OwnedColors));
+
+                            if (best != null && isFinishingMove(candidateDice[best.Value.diceIndex], best.Value.pieceIndex, OwnedColors))
+                            {
+                                best = (best.Value.diceIndex, best.Value.pieceIndex, int.MinValue);
+                            }
                         }
 
                         int score = best?.score ?? int.MinValue;
@@ -100,21 +107,25 @@ public class LudoMoveEvaluator
             }
         }
 
-        if (rigGate.CheckTrue() && !game.Ahead(turnIndex))
+        if (rigGate.CheckTrue() && !game.Ahead(turnIndex, out int homeCount) && homeCount < maxWinCount)
         {
             a = bestA;
             b = bestB;
         }
         else
         {
+            short[] addCandidates = { -2, -1, 1, 2 };
+
             do
             {
-                a = (short)rng.Next(1, 7);
+                var toAdd = addCandidates[rng.Next(addCandidates.Length)];
+                a = (short)Math.Clamp(bestA + toAdd, 1, 6);
             } while (a == 0 || a == bestA);
 
             do
             {
-                b = (short)rng.Next(1, 7);
+                var toAdd = addCandidates[rng.Next(addCandidates.Length)];
+                b = (short)Math.Clamp(bestB + toAdd, 1, 6);
             } while (b == 0 || b == bestB);
         }
 
@@ -237,7 +248,7 @@ public class LudoMoveEvaluator
             // otherwise, so it doesn't keep abandoning board progress just to fetch
             // another piece every time a 6 shows up.
             var activeOwnedPieces = CountActiveOwnedPieces(allPositions, OwnedColors);
-            score += Math.Max(3 - activeOwnedPieces, 0) * 15;
+            score += Math.Max(3 - activeOwnedPieces, 0) * 100;
         }
 
         if (dest >= 56)

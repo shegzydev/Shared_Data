@@ -128,8 +128,6 @@ public class WordGame
             }
         }
 
-        LogAction?.Invoke(LogType.Log, $"a char is of size {sizeof(char)}");
-
         OnStateUpdate?.Invoke(roomID, 0, GetDrawingData());
         OnStateUpdate?.Invoke(roomID, 1, GetDrawingData());
     }
@@ -226,7 +224,6 @@ public class WordGame
 
         //var currword = word[player].ToString();
         var currword = wordToCheck;
-        LogAction?.Invoke(LogType.Log, "checking word" + currword);
 
         formedWord[player].Clear();
         word[player].Clear();
@@ -238,8 +235,9 @@ public class WordGame
 
         if (foundWords[player].ContainsKey(currword))
         {
+            //Already found word
+
             // OnCheckWord?.Invoke(roomID, player, false);
-            LogAction?.Invoke(LogType.Log, $"false: Found word {currword} already!");
         }
         else
         {
@@ -247,7 +245,6 @@ public class WordGame
             {
                 if (Words.Contains(currword))
                 {
-                    LogAction?.Invoke(LogType.Log, $"true: Found word {currword}");
                     int score = ComputeScore(currword) * 100;
                     scores[player] += score;
                     foundWords[player].Add(currword, score);
@@ -255,7 +252,6 @@ public class WordGame
                 }
                 else
                 {
-                    LogAction?.Invoke(LogType.Log, $"false: Could not find word {currword}");
                     OnCheckWord?.Invoke(roomID, player, false);
                 }
             }
@@ -498,7 +494,6 @@ public class WordGame
             }
             catch (EndOfStreamException)
             {
-                LogAction?.Invoke(LogType.Log, "Una don reach stream end!");
             }
         }
     }
