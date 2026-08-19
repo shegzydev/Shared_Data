@@ -328,7 +328,7 @@ public class Snooker
                 if (ball.potted) continue;
 
                 var dx = ball.px - hole.px;
-                var dy = ball.px - hole.py;
+                var dy = ball.py - hole.py;
 
                 var dist = libm.sqrtf(dx * dx + dy * dy);
 
@@ -336,8 +336,8 @@ public class Snooker
                 {
                     ball.potted = true;
 
-                    ball.px = dropPosition.x;
-                    ball.py = dropPosition.y;
+                    ball.px = dropPosition.x * (sfloat)10;
+                    ball.py = dropPosition.y * (sfloat)10;
 
                     OnHole((ball, hole));
                 }
