@@ -1,4 +1,3 @@
-using UnityEngine;
 using SoftFloat;
 using System.Collections.Generic;
 using System;
@@ -406,13 +405,6 @@ public class Snooker
                 if (contact.toi > sfloat.Zero) break;
             }
         }
-
-        Log("iterations", iterations);
-    }
-
-    void Log(params object[] data)
-    {
-        Debug.Log(string.Join(", ", data));
     }
 
     void AdvanceAll(sfloat t)

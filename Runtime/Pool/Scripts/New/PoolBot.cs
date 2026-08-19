@@ -681,7 +681,7 @@ public class PoolBot
         await Task.Delay(1000);
 
         var power = cue_shots[0].dist / TableWidth;
-        power = Math.Clamp(power, 0.2f, 1f) * 600000;
+        power = Math.Clamp(power, 0.2f, 1f) * 700;
 
         pool.Fire((sfloat)fireDir.x, (sfloat)fireDir.y, (sfloat)power);
     }
