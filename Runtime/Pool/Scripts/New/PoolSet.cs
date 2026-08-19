@@ -2,14 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using FixedMath;
+using SoftFloat;
+// using FixedMath;
 
 public enum PoolNetEvents : byte
 {
     Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack, Foul, Scratch, Rejoin
 }
 
-namespace PhysicsEngine
+namespace PoolEngine
 {
     enum State
     {
@@ -25,21 +26,23 @@ namespace PhysicsEngine
 
     public class PoolSet
     {
-        PoolPhysics physics = new PoolPhysics();
+        public Snooker physics;
 
-        public Circle cueBall = new Circle(-73.000, 0);
-        public List<Circle> balls = new List<Circle>();
-        public List<Edge> edges = new List<Edge>();
-        public List<Circle> holes = new List<Circle>();
+        // public Circle cueBall = new Circle(-73.000, 0);
+        // public List<Circle> balls = new List<Circle>();
+        // public List<Edge> edges = new List<Edge>();
+        // public List<Circle> holes = new List<Circle>();
 
         bool scratch;
         bool port8;
         bool edgeHit;
         bool pocketedOwnBall;
         bool pocketedAnyBall;
-        Circle firstHit;
-        Circle calledPocket;
-        Circle actualPocket;
+
+        int firstHit = -1;
+
+        Snooker.Circle calledPocket;
+        Snooker.Circle actualPocket;
 
         int turn;
         State gameState;
@@ -52,20 +55,23 @@ namespace PhysicsEngine
         public bool getBallInHand => ballInHand;
         public bool getBreaking => breaking;
 
-        HashSet<Circle>[] targets = new HashSet<Circle>[2]
+        public Snooker.Ball cueBall => physics.GetBalls[0];
+        public Snooker.Ball[] GetBalls => physics.GetBalls;
+
+        HashSet<int>[] targets = new HashSet<int>[2]
         {
             new(),
             new()
         };
 
-        HashSet<Circle>[] targetType = new HashSet<Circle>[2]
+        HashSet<int>[] targetType = new HashSet<int>[2]
         {
             new(),
             new()
         };
 
-        HashSet<Circle> solids, stripes;
-        List<Circle> potted = new();
+        HashSet<int> solids, stripes;
+
         bool acceptCollisions;
         bool assigned = false;
 
@@ -86,55 +92,7 @@ namespace PhysicsEngine
 
             OnBreak.Invoke(turn);
 
-            physics = new PoolPhysics();
-
-            // Add walls
-            for (int i = 0; i < MetaData.wallPoints.Length; i++)
-            {
-                var edge = new Edge
-                {
-                    P1 = MetaData.wallPoints[i],
-                    P2 = MetaData.wallPoints[(i + 1) % MetaData.wallPoints.Length],
-                    Bouncy = true,
-                    tag = "edge"
-                };
-                edges.Add(edge);
-                physics.AddEdge(edge);
-            }
-
-            // Add rails (non-bouncy)
-            for (int i = 0; i < MetaData.railPoints.Length; i++)
-            {
-                var edge = new Edge
-                {
-                    P1 = MetaData.railPoints[i],
-                    P2 = MetaData.railPoints[(i + 1) % MetaData.railPoints.Length],
-                    Bouncy = false,
-                    tag = "rail"
-                };
-                edges.Add(edge);
-                physics.AddEdge(edge);
-            }
-
-            // Add object balls
-            for (int i = 0; i < MetaData.rack.Length; i++)
-            {
-                var ball = new Circle(MetaData.rack[i].X, MetaData.rack[i].Y, PhysicsParameters.ballRadius)
-                {
-                    tag = (i < 7) ? "solids" : ((i > 7) ? "stripes" : "black")
-                };
-                balls.Add(ball);
-                physics.AddCircle(ball);
-            }
-
-            // Add holes
-            for (int i = 0; i < MetaData.holes.Length; i++)
-            {
-                holes.Add(MetaData.holes[i]);
-                physics.AddHole(MetaData.holes[i]);
-            }
-
-            physics.AddCircle(cueBall);
+            physics = new Snooker(1, -9.81f);
 
             HandleEvents();
             RackUp(false);
@@ -147,7 +105,6 @@ namespace PhysicsEngine
             physics.OnHole = data =>
             {
                 HoleHandler(data);
-                potted.Add(data.ball);
                 OnPocket();
             };
 
@@ -155,12 +112,12 @@ namespace PhysicsEngine
             {
                 if (!acceptCollisions) return;
 
-                if (data.A == cueBall || data.B == cueBall)
+                if (data.A.isCue || data.B.isCue)
                 {
-                    firstHit ??= data.A == cueBall ? data.B : data.A;
+                    if (firstHit == -1) firstHit = data.A.isCue ? data.B.number : data.A.number;
                 }
 
-                if (data.A.IsPocketed) return;
+                if (data.A.potted) return;
                 OnBallHit();
             };
 
@@ -181,34 +138,30 @@ namespace PhysicsEngine
             };
         }
 
-        void HoleHandler((Circle ball, Circle hole) data)
+        void HoleHandler((Snooker.Ball ball, Snooker.Circle hole) data)
         {
-            data.ball.Center = MetaData.dropPosition;
-            data.ball.Velocity = new Vector2Fixed(1.0, 0) * data.ball.Velocity.Length();
-            data.ball.IsPocketed = true;
-
-            if (data.ball == cueBall)
+            if (data.ball.isCue)
             {
                 scratch = true;
                 return;
             }
 
-            if (data.ball == balls[7])
+            if (data.ball.is8)
             {
                 port8 = true;
                 actualPocket = data.hole;
                 return;
             }
 
-            bool isSolid = solids.Contains(data.ball);
-            bool isStripe = stripes.Contains(data.ball);
+            bool isSolid = solids.Contains(data.ball.number);
+            bool isStripe = stripes.Contains(data.ball.number);
 
             if (!assigned)
             {
                 if (isSolid)
                 {
-                    targetType[turn] = new HashSet<Circle>(solids);
-                    targetType[1 - turn] = new HashSet<Circle>(stripes);
+                    targetType[turn] = new HashSet<int>(solids);
+                    targetType[1 - turn] = new HashSet<int>(stripes);
 
                     targets[turn] = solids;
                     targets[1 - turn] = stripes;
@@ -217,8 +170,8 @@ namespace PhysicsEngine
                 }
                 else if (isStripe)
                 {
-                    targetType[turn] = new HashSet<Circle>(stripes);
-                    targetType[1 - turn] = new HashSet<Circle>(solids);
+                    targetType[turn] = new HashSet<int>(stripes);
+                    targetType[1 - turn] = new HashSet<int>(solids);
 
                     targets[turn] = stripes;
                     targets[1 - turn] = solids;
@@ -230,13 +183,13 @@ namespace PhysicsEngine
 
             pocketedAnyBall = true;
 
-            if (targets[turn].Contains(data.ball))
+            if (targets[turn].Contains(data.ball.number))
             {
                 pocketedOwnBall = true;
             }
 
-            if (solids.Contains(data.ball)) solids.Remove(data.ball);
-            if (stripes.Contains(data.ball)) stripes.Remove(data.ball);
+            if (solids.Contains(data.ball.number)) solids.Remove(data.ball.number);
+            if (stripes.Contains(data.ball.number)) stripes.Remove(data.ball.number);
         }
 
         void StopHandler()
@@ -282,7 +235,7 @@ namespace PhysicsEngine
                 }
 
                 // Legal break requires: hit the rack AND (pocket a ball OR hit a rail)
-                if (firstHit == null || (!pocketedAnyBall && !edgeHit))
+                if (firstHit == -1 || (!pocketedAnyBall && !edgeHit))
                 {
                     Logger.Log("Illegal break (no hit or no rail/pocket) → foul");
                     ResetCue(BallInHandRule.Anywhere);
@@ -347,7 +300,7 @@ namespace PhysicsEngine
             // ─────────────────────────────────────────────
             // PRIORITY 5: No first hit → foul (cue ball hit nothing)
             // ─────────────────────────────────────────────
-            if (firstHit == null)
+            if (firstHit == -1)
             {
                 Logger.Log("No first hit → foul");
                 ResetCue(BallInHandRule.Anywhere);
@@ -407,7 +360,7 @@ namespace PhysicsEngine
                 Logger.Log("Own ball pocketed → same player continues");
                 if (pocketedOwnBall && targets[turn].Count == 0)
                 {
-                    targetType[turn] = new HashSet<Circle>(balls.Where((x, i) => i == 7));
+                    targetType[turn] = new HashSet<int>(Enumerable.Repeat(8, 1));
                 }
             }
 
@@ -417,7 +370,7 @@ namespace PhysicsEngine
 
         void ResetParams()
         {
-            firstHit = null;
+            firstHit = -1;
             scratch = false;
             edgeHit = false;
             port8 = false;
@@ -430,53 +383,44 @@ namespace PhysicsEngine
 
         public void RackUp(bool reRack = true)
         {
-            for (int i = 0; i < balls.Count; i++)
-            {
-                balls[i].Center = MetaData.rack[i];
-                balls[i].PrevCenter = balls[i].Center;
-                balls[i].Velocity = Vector2Fixed.Zero;
-                balls[i].IsPocketed = false;
-            }
+            physics.RackBalls();
 
-            solids = new HashSet<Circle>(balls.Where((x, i) => i < 7));
-            stripes = new HashSet<Circle>(balls.Where((x, i) => i > 7));
+            solids = new HashSet<int>(Enumerable.Range(1, 7));
+            stripes = new HashSet<int>(Enumerable.Range(9, 7));
 
             gameState = State.Breaking;
 
             ResetCue(BallInHandRule.None);
 
             if (reRack) OnReRack.Invoke();
-
-            foreach (var ball in potted)
-            {
-                ball.IsPocketed = false;
-            }
-
-            potted.Clear();
         }
 
         public void ResetCue(BallInHandRule rule = BallInHandRule.None)
         {
+
             switch (rule)
             {
-                case BallInHandRule.BehindHeadstring:
-                    cueBall.Center = new Vector2Fixed(MetaData.headStringX, MetaData.cueBallStart.Y);
-                    break;
-
                 case BallInHandRule.Anywhere:
-                    cueBall.Center = Vector2Fixed.Zero;
+                    physics.ResetCue(true);
                     break;
 
+                case BallInHandRule.BehindHeadstring:
                 case BallInHandRule.None:
                 default:
-                    cueBall.Center = MetaData.cueBallStart;
+                    physics.ResetCue();
                     break;
             }
 
-            cueBall.PrevCenter = cueBall.Center;
-            cueBall.Velocity = Vector2Fixed.Zero;
-            cueBall.IsPocketed = false;
-            if (potted.Contains(cueBall)) potted.Remove(cueBall);
+        }
+
+        public void placeCueFromRaw(uint x, uint y)
+        {
+            physics.PlaceCue(sfloat.FromRaw(x), sfloat.FromRaw(y));
+        }
+
+        public void PlaceCue(sfloat x, sfloat y)
+        {
+            physics.PlaceCue(x, y);
         }
 
         public void Update(float deltaTime)
@@ -491,23 +435,25 @@ namespace PhysicsEngine
                 }
             }
 
-            foreach (var pottedBall in potted)
-            {
-                pottedBall.ApplyGravity(-500);
-            }
-
-            physics.Tick();
+            physics.Tick(deltaTime);
         }
 
-        public void Fire(Vector2Fixed velocity)
+        public void Fire(sfloat power, sfloat dx, sfloat dy)
         {
-            cueBall.Velocity = velocity;
-            cueBall.IsPocketed = false;
-            physics.Fire();
+            physics.Fire(power * dx, power * dy);
             acceptCollisions = true;
             ResetTimer();
             timerRunning = false;
-            OnFire((turn, velocity.X, velocity.Y));
+            OnFire((turn, (power * dx).RawValue, (power * dy).RawValue));
+        }
+
+        public void Fire(sfloat vx, sfloat vy)
+        {
+            physics.Fire(vx, vy);
+            acceptCollisions = true;
+            ResetTimer();
+            timerRunning = false;
+            OnFire((turn, vx.RawValue, vy.RawValue));
         }
 
         void Next()
@@ -559,7 +505,7 @@ namespace PhysicsEngine
         public event Action<int> OnTurnChanged = _ => { };
         public event Action<int> OnScratch = _ => { };
         public event Action<int> OnFoul = _ => { };
-        public event Action<(int turn, Fixed64 X, Fixed64 Y)> OnFire = _ => { };
+        public event Action<(int turn, uint X, uint Y)> OnFire = _ => { };
         public event Action<(int player, int group)> OnAssign = _ => { };
         public event Action<int> OnBreak = _ => { };
         public event Action OnReRack = () => { };
@@ -571,7 +517,6 @@ namespace PhysicsEngine
         public event Action OnBallHit = () => { };
         public event Action OnEdgeHit = () => { };
         public event Action OnPocket = () => { };
-
 
         public Action OnStop = () => { };
 
@@ -596,31 +541,22 @@ namespace PhysicsEngine
                 writer.Write(timers[0]);
                 writer.Write(timers[1]);
 
-                for (int i = 0; i < balls.Count; i++)
+                var balls = physics.GetBalls;
+                for (int i = 0; i < balls.Length; i++)
                 {
-                    writer.Write(balls[i].Center.X.ToDouble());
-                    writer.Write(balls[i].Center.Y.ToDouble());
-                    writer.Write(balls[i].PrevCenter.X.ToDouble());
-                    writer.Write(balls[i].PrevCenter.Y.ToDouble());
-                    writer.Write(balls[i].Velocity.X.ToDouble());
-                    writer.Write(balls[i].Velocity.Y.ToDouble());
-                    writer.Write(balls[i].IsPocketed);
+                    writer.Write(balls[i].px.RawValue);
+                    writer.Write(balls[i].py.RawValue);
+                    writer.Write(balls[i].vx.RawValue);
+                    writer.Write(balls[i].vy.RawValue);
+                    writer.Write(balls[i].potted);
                 }
-
-                writer.Write(cueBall.Center.X.ToDouble());
-                writer.Write(cueBall.Center.Y.ToDouble());
-                writer.Write(cueBall.PrevCenter.X.ToDouble());
-                writer.Write(cueBall.PrevCenter.Y.ToDouble());
-                writer.Write(cueBall.Velocity.X.ToDouble());
-                writer.Write(cueBall.Velocity.Y.ToDouble());
-                writer.Write(cueBall.IsPocketed);
 
                 for (int i = 0; i < 2; i++)
                 {
                     writer.Write(targetType[i].Count);
                     foreach (var ball in targetType[i])
                     {
-                        writer.Write(balls.IndexOf(ball));
+                        writer.Write(ball);
                     }
                 }
 
@@ -629,7 +565,7 @@ namespace PhysicsEngine
                     writer.Write(targets[i].Count);
                     foreach (var ball in targets[i])
                     {
-                        writer.Write(balls.IndexOf(ball));
+                        writer.Write(ball);
                     }
                 }
 
@@ -656,23 +592,15 @@ namespace PhysicsEngine
                 timers[0] = reader.ReadSingle();
                 timers[1] = reader.ReadSingle();
 
-                potted.Clear();
-                for (int i = 0; i < balls.Count; i++)
+                var balls = physics.GetBalls;
+                for (int i = 0; i < balls.Length; i++)
                 {
-                    balls[i].Center = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
-                    balls[i].PrevCenter = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
-                    balls[i].Velocity = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
-                    balls[i].IsPocketed = reader.ReadBoolean();
-
-                    if (balls[i].IsPocketed) { potted.Add(balls[i]); }
+                    balls[i].px = sfloat.FromRaw(reader.ReadUInt32());
+                    balls[i].py = sfloat.FromRaw(reader.ReadUInt32());
+                    balls[i].vx = sfloat.FromRaw(reader.ReadUInt32());
+                    balls[i].vy = sfloat.FromRaw(reader.ReadUInt32());
+                    balls[i].potted = reader.ReadBoolean();
                 }
-
-                cueBall.Center = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
-                cueBall.PrevCenter = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
-                cueBall.Velocity = new((Fixed64)reader.ReadDouble(), (Fixed64)reader.ReadDouble());
-                cueBall.IsPocketed = reader.ReadBoolean();
-
-                if (cueBall.IsPocketed) { potted.Add(cueBall); }
 
                 for (int i = 0; i < 2; i++)
                 {
@@ -680,7 +608,7 @@ namespace PhysicsEngine
                     var count = reader.ReadInt32();
                     for (int j = 0; j < count; j++)
                     {
-                        targetType[i].Add(balls[reader.ReadInt32()]);
+                        targetType[i].Add(reader.ReadInt32());
                     }
                 }
 
@@ -690,7 +618,7 @@ namespace PhysicsEngine
                     var count = reader.ReadInt32();
                     for (int j = 0; j < count; j++)
                     {
-                        targets[i].Add(balls[reader.ReadInt32()]);
+                        targets[i].Add(reader.ReadInt32());
                     }
                 }
             }

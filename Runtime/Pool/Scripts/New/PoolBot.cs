@@ -5,7 +5,8 @@ using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using FixedMath;
-using PhysicsEngine;
+using PoolEngine;
+using SoftFloat;
 
 public class PoolBot
 {
@@ -382,17 +383,19 @@ public class PoolBot
         var myBalls = new List<Vector3>();
 
         var solids = new List<Vector3>();
-        for (int i = 0; i < 7; i++)
+        for (int i = 1; i <= 7; i++)
         {
-            if ((double)pool.balls[i].Center.X > TableWidth / 2) continue;
-            solids.Add(new Vector3(pool.balls[i].Center.X, pool.balls[i].Center.Y, 0));
+            var ball = pool.GetBalls[i];
+            if ((double)ball.px > TableWidth / 2) continue;
+            solids.Add(new Vector3((float)ball.px, (float)ball.py, 0));
         }
 
         var stripes = new List<Vector3>();
-        for (int i = 8; i < 15; i++)
+        for (int i = 9; i <= 15; i++)
         {
-            if ((double)pool.balls[i].Center.X > TableWidth / 2) continue;
-            stripes.Add(new Vector3(pool.balls[i].Center.X, pool.balls[i].Center.Y, 0));
+            var ball = pool.GetBalls[i];
+            if ((double)ball.px > TableWidth / 2) continue;
+            stripes.Add(new Vector3((float)ball.px, (float)ball.py, 0));
         }
 
         var playerTypeTarget = pool.GetPlayerType(player);
@@ -406,7 +409,8 @@ public class PoolBot
         }
         else if (playerTypeTarget == 2) //ball8
         {
-            myBalls.Add(new Vector3(pool.balls[7].Center.X, pool.balls[7].Center.Y, 0));
+            var ball = pool.GetBalls[8];
+            myBalls.Add(new Vector3((float)ball.px, (float)ball.py, 0));
         }
         else if (playerTypeTarget == 3)
         {
@@ -416,7 +420,7 @@ public class PoolBot
 
         List<F_Shot> cue_shots = new();
 
-        Vector3 cueBallPosition = new Vector3(pool.cueBall.Center.X, pool.cueBall.Center.Y);
+        Vector3 cueBallPosition = new Vector3((float)pool.cueBall.px, (float)pool.cueBall.py);
 
         foreach (var ball in myBalls)
         {
@@ -679,12 +683,13 @@ public class PoolBot
         var power = cue_shots[0].dist / TableWidth;
         power = Math.Clamp(power, 0.2f, 1f) * 600000;
 
-        pool.Fire(new Vector2Fixed((Fixed64)fireDir.x, (Fixed64)fireDir.y) * (Fixed64)power);
+        pool.Fire((sfloat)fireDir.x, (sfloat)fireDir.y, (sfloat)power);
     }
 
     bool LineOfSight(Vector3 a, Vector3 b, out double dist)
     {
-        bool hit = CircleSweeper.Sweep(new Vector2Fixed(a.x, a.y), (Fixed64)Ball.radius, new Vector2Fixed(b.x - a.x, b.y - a.y).Normalized(), (Fixed64)(b - a).magnitude, pool.balls, pool.edges, out var hitInfo);
+        var dir = (b - a).normalized;
+        bool hit = BallSweeper.Sweep(((sfloat)a.x, (sfloat)a.y), (sfloat)Ball.radius, ((sfloat)dir.x, (sfloat)dir.y), (sfloat)(b - a).magnitude, pool.physics, out var hitInfo);
         dist = (b - a).magnitude;
 
         if (!hit) return true;
@@ -696,7 +701,7 @@ public class PoolBot
     {
         foreach (var h in holes)
         {
-            bool hit = CircleSweeper.Sweep(new Vector2Fixed(pos.x, pos.y), (Fixed64)Ball.radius, new Vector2Fixed(dir.x, dir.y).Normalized(), (Fixed64)(h - pos).magnitude, pool.balls, pool.edges, out var hitInfo);
+            bool hit = BallSweeper.Sweep(((sfloat)pos.x, (sfloat)pos.y), (sfloat)Ball.radius, ((sfloat)dir.x, (sfloat)dir.y), (sfloat)(h - pos).magnitude, pool.physics, out var hitInfo);
             if (!hit) return true;
         }
         return false;
@@ -717,7 +722,7 @@ public class PoolBot
 
             var testDirection = (mirrorPoint - start).normalized;
 
-            bool hit = CircleSweeper.Sweep(new Vector2Fixed(start.x, start.y), (Fixed64)Ball.radius, new Vector2Fixed(testDirection.x, testDirection.y).Normalized(), 200000, pool.balls, pool.edges, out var hitInfo);
+            bool hit = BallSweeper.Sweep(((sfloat)start.x, (sfloat)start.y), (sfloat)Ball.radius, ((sfloat)testDirection.x, (sfloat)testDirection.y), (sfloat)200000, pool.physics, out var hitInfo);
             if (!(hit && hitInfo.hitType == SweepHit.HitType.Edge))
                 continue;
 
@@ -725,7 +730,7 @@ public class PoolBot
             if (!((hit = physics2D.CircleCast(start, Ball.radius, testDirection, 200)).transform && !hit.transform.GetComponent<Ball>() && !hit.transform.CompareTag("Pocket")))
                 continue;*/
 
-            if (new Vector3(hitInfo.Normal.X, hitInfo.Normal.Y) != normals[i]) continue;
+            if (new Vector3((float)hitInfo.NormalX, (float)hitInfo.NormalY) != normals[i]) continue;
 
             var testHitPos = start + testDirection * (double)hitInfo.Distance;
 
@@ -766,7 +771,7 @@ public class PoolBot
 
                 var testDir = (mirrorPoint2 - start).normalized;
 
-                bool hit = CircleSweeper.Sweep(new Vector2Fixed(start.x, start.y), (Fixed64)Ball.radius, new Vector2Fixed(testDir.x, testDir.y).Normalized(), 200000, pool.balls, pool.edges, out var hitInfo);
+                bool hit = BallSweeper.Sweep(((sfloat)start.x, (sfloat)start.y), (sfloat)Ball.radius, ((sfloat)testDir.x, (sfloat)testDir.y), (sfloat)200000, pool.physics, out var hitInfo);
                 if (!(hit && hitInfo.hitType == SweepHit.HitType.Edge))
                     continue;
 
@@ -775,9 +780,9 @@ public class PoolBot
                     continue;*/
 
                 Vector3 traceStart = start + testDir * (double)hitInfo.Distance;
-                var traceDir = Vector3.Reflect(testDir, new Vector3(hitInfo.Normal.X, hitInfo.Normal.Y));
+                var traceDir = Vector3.Reflect(testDir, new Vector3((float)hitInfo.NormalX, (float)hitInfo.NormalY)).normalized;
 
-                bool hit2 = CircleSweeper.Sweep(new Vector2Fixed(traceStart.x, traceStart.y), (Fixed64)Ball.radius, new Vector2Fixed(traceDir.x, traceDir.y).Normalized(), 200000, pool.balls, pool.edges, out var hitInfo2);
+                bool hit2 = BallSweeper.Sweep(((sfloat)traceStart.x, (sfloat)traceStart.y), (sfloat)Ball.radius, ((sfloat)traceDir.x, (sfloat)traceDir.y), (sfloat)200000, pool.physics, out var hitInfo2);
                 if (!(hit2 && hitInfo2.hitType == SweepHit.HitType.Edge))
                     continue;
 
@@ -791,7 +796,7 @@ public class PoolBot
                     shots.Add(new Shot
                     {
                         hitDirection = testDir,
-                        reflectionDirection = Vector3.Reflect(traceDir, new Vector3(hitInfo2.Normal.X, hitInfo2.Normal.Y)),
+                        reflectionDirection = Vector3.Reflect(traceDir, new Vector3((float)hitInfo2.NormalX, (float)hitInfo2.NormalY)),
                         hitPosition = traceStart,
                         distance = (double)(hitInfo.Distance + hitInfo2.Distance) + lineDist,
                         path = new Vector3[4] { start, traceStart, lastPoint, target }

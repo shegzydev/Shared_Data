@@ -1,145 +1,179 @@
-using System;
 using System.Collections.Generic;
-using FixedMath;
+using SoftFloat;
 
-namespace PhysicsEngine
+namespace PoolEngine
 {
     public struct SweepHit
     {
         public enum HitType { Circle, Edge }
-        public Fixed64 T;
-        public Fixed64 Distance;
-        public Vector2Fixed Point;
-        public Vector2Fixed Normal;
-        public HitType hitType;
-        public PhysicsObj hitObj;
+        public sfloat T;
+        public sfloat Distance;
 
-        public override string ToString() => $"T={T:F3}, Point=({Point.X:F0}, {Point.Y:F0})";
+        public sfloat PointX, PointY;
+        public sfloat NormalX, NormalY;
+
+        public HitType hitType;
+        public int hitObj;
+
+        public override string ToString() => $"T={T:F3}, Point=({PointX:F0}, {PointY:F0})";
     }
 
-    public static class CircleSweeper
+    public static class BallSweeper
     {
+        static sfloat length((sfloat x, sfloat y) v)
+        {
+            return libm.sqrtf(v.x * v.x + v.y * v.y);
+        }
+
+        static sfloat dot((sfloat x, sfloat y) v1, (sfloat x, sfloat y) v2)
+        {
+            return v1.x * v2.x + v1.y * v2.y;
+        }
+
+        public static (sfloat x, sfloat y) normal((sfloat x, sfloat y) v)
+        {
+            var len = length(v);
+            return (v.x / len, v.y / len);
+        }
+
+        static bool isInfinity(sfloat f)
+        {
+            if (f == sfloat.PositiveInfinity) return true;
+            if (f == sfloat.NegativeInfinity) return true;
+            return false;
+        }
+
         public static bool Sweep(
-            Vector2Fixed origin, Fixed64 radius,
-            Vector2Fixed direction, Fixed64 distance,
-            List<Circle> circles,
-            List<Edge> edges,
+            (sfloat x, sfloat y) origin, sfloat radius,
+             (sfloat x, sfloat y) direction, sfloat distance,
+            Snooker snooker,
             out SweepHit hit)
         {
             hit = default;
-            Fixed64 bestT = Fixed64.MaxValue;
-            Vector2Fixed dirNorm = direction.Normalized();
+            sfloat bestT = sfloat.MaxValue;
 
-            foreach (var c in circles)
+            var dirNorm = normal((direction.x, direction.y));
+
+            foreach (var c in snooker.GetBalls)
             {
-                if ((c.Center - origin).Length() < radius)
+                if (length((c.px - origin.x, c.py - origin.y)) < radius)
                 {
                     continue;
                 }
 
-                if (SweepVsCircle(origin, radius, dirNorm, distance, c, out var h) && h.T < bestT)
+                if (SweepVsBall((origin.x, origin.y), radius, dirNorm, distance, c, out var h) && h.T < bestT)
                 {
                     bestT = h.T;
                     hit = h;
                 }
             }
 
-            foreach (var e in edges)
+            foreach (var e in snooker.GetEdges)
             {
-                if (SweepVsEdge(origin, radius, dirNorm, distance, e, out var h) && h.T < bestT)
+                if (SweepVsEdge((origin.x, origin.y), radius, dirNorm, distance, e, out var h) && h.T < bestT)
                 {
                     bestT = h.T;
                     hit = h;
                 }
             }
 
-            return bestT <= Fixed64.One;
+            return bestT <= sfloat.One;
         }
 
-        public static bool SweepVsCircle(
-            Vector2Fixed origin, Fixed64 radius,
-            Vector2Fixed direction, Fixed64 distance,
-            Circle target,
+        public static bool SweepVsBall(
+            (sfloat x, sfloat y) origin, sfloat radius,
+            (sfloat x, sfloat y) direction, sfloat distance,
+            Snooker.Ball target,
             out SweepHit hit)
         {
             hit = default;
 
-            Fixed64 combinedR = radius + target.Radius;
-            Fixed64 deltaX = origin.X - target.Center.X;
-            Fixed64 deltaY = origin.Y - target.Center.Y;
+            sfloat combinedR = radius + target.r;
+            sfloat deltaX = origin.x - target.px;
+            sfloat deltaY = origin.y - target.py;
 
-            Fixed64 a = Vector2Fixed.Dot(direction, direction);
-            Fixed64 b = 2 * (deltaX * direction.X + deltaY * direction.Y);
-            Fixed64 c = deltaX * deltaX + deltaY * deltaY - combinedR * combinedR;
-            Fixed64 disc = b * b - 4 * a * c;
+            sfloat a = dot(direction, direction);
+            sfloat b = (sfloat)2 * (deltaX * direction.x + deltaY * direction.y);
+            sfloat c = deltaX * deltaX + deltaY * deltaY - combinedR * combinedR;
+            sfloat disc = b * b - (sfloat)4 * a * c;
 
-            if (disc < 0) return false;
+            if (disc < sfloat.Zero) return false;
 
-            Fixed64 sqrtDisc = Fixed64.Sqrt(disc);
-            Fixed64 twoA = 2 * a;
+            sfloat sqrtDisc = libm.sqrtf(disc);
+            sfloat twoA = (sfloat)2 * a;
 
-            Fixed64 t1 = (-b - sqrtDisc) / twoA;
-            Fixed64 t2 = (-b + sqrtDisc) / twoA;
+            sfloat t1 = (-b - sqrtDisc) / twoA;
+            sfloat t2 = (-b + sqrtDisc) / twoA;
 
-            Fixed64 t = Fixed64.MaxValue;
-            if (t1 >= 0 && t1 <= distance) t = t1;
-            else if (t2 >= 0 && t2 <= distance) t = t2;
+            sfloat t = sfloat.MaxValue;
+            if (t1 >= sfloat.Zero && t1 <= distance) t = t1;
+            else if (t2 >= sfloat.Zero && t2 <= distance) t = t2;
 
-            if (t == Fixed64.MaxValue || Fixed64.IsInfinity(t)) return false;
+            if (t == sfloat.MaxValue || isInfinity(t)) return false;
 
-            Vector2Fixed hitPoint = origin + direction * t;
-            Vector2Fixed normal = (hitPoint - target.Center).Normalized();
+            sfloat hitPointX = origin.x + direction.x * t;
+            sfloat hitPointY = origin.y + direction.y * t;
+
+            var norm = normal((hitPointX - target.px, hitPointY - target.py));
 
             hit = new SweepHit
             {
                 T = t / distance,
+
                 Distance = t,
-                Point = hitPoint,
-                Normal = normal,
+
+                PointX = hitPointX,
+                PointY = hitPointY,
+
+                NormalX = norm.x,
+                NormalY = norm.y,
+
                 hitType = SweepHit.HitType.Circle,
-                hitObj = target
+                hitObj = target.number
             };
             return true;
         }
 
         public static bool SweepVsEdge(
-            Vector2Fixed origin, Fixed64 radius,
-            Vector2Fixed direction, Fixed64 distance,
-            Edge edge,
+            (sfloat x, sfloat y) origin, sfloat radius,
+            (sfloat x, sfloat y) direction, sfloat distance,
+            Snooker.Edge edge,
             out SweepHit hit)
         {
             hit = default;
-            Fixed64 bestT = Fixed64.MaxValue;
+            sfloat bestT = sfloat.MaxValue;
             SweepHit bestHit = default;
 
-            Fixed64 ex = edge.P2.X - edge.P1.X;
-            Fixed64 ey = edge.P2.Y - edge.P1.Y;
-            Fixed64 edgeLenSq = ex * ex + ey * ey;
+            sfloat ex = edge.x2 - edge.x1;
+            sfloat ey = edge.y2 - edge.y1;
+            sfloat edgeLenSq = ex * ex + ey * ey;
 
-            if (edgeLenSq > Fixed64.FromDouble(1e-10))
+            if (edgeLenSq > sfloat.Epsilon)
             {
-                Fixed64 nx = -ey;
-                Fixed64 ny = ex;
-                Vector2Fixed normal = new Vector2Fixed(nx, ny).Normalized();
+                sfloat nx = -ey;
+                sfloat ny = ex;
+                var norm = normal((nx, ny));
 
-                Fixed64 side = normal.X * (origin.X - edge.P1.X) + normal.Y * (origin.Y - edge.P1.Y);
-                if (side < 0) normal = new Vector2Fixed(-normal.X, -normal.Y);
+                sfloat side = norm.x * (origin.x - edge.x1) + norm.y * (origin.y - edge.y1);
+                if (side < sfloat.Zero) norm = (-norm.x, -norm.y);
 
-                Fixed64 dOrigin = normal.X * (origin.X - edge.P1.X) + normal.Y * (origin.Y - edge.P1.Y);
-                Fixed64 dDir = Vector2Fixed.Dot(normal, direction);
+                sfloat dOrigin = norm.x * (origin.x - edge.x1) + norm.y * (origin.y - edge.y1);
+                sfloat dDir = dot(norm, direction);
 
-                if (dDir < 0)
+                if (dDir < sfloat.Zero)
                 {
-                    Fixed64 tHit = (dOrigin - radius) / -dDir;
+                    sfloat tHit = (dOrigin - radius) / -dDir;
 
-                    if (tHit >= 0 && tHit <= distance && !Fixed64.IsInfinity(tHit))
+                    if (tHit >= sfloat.Zero && tHit <= distance)
                     {
-                        Vector2Fixed hitPoint = origin + direction * tHit;
+                        sfloat hitPointX = origin.x + direction.x * tHit;
+                        sfloat hitPointY = origin.y + direction.y * tHit;
 
-                        Fixed64 proj = ex * (hitPoint.X - edge.P1.X) + ey * (hitPoint.Y - edge.P1.Y);
-                        if (proj >= 0 && proj <= edgeLenSq)
+                        sfloat proj = ex * (hitPointX - edge.x1) + ey * (hitPointY - edge.y1);
+
+                        if (proj >= sfloat.Zero && proj <= edgeLenSq)
                         {
-                            Fixed64 T = tHit / distance;
+                            sfloat T = tHit / distance;
                             if (T < bestT)
                             {
                                 bestT = T;
@@ -147,10 +181,12 @@ namespace PhysicsEngine
                                 {
                                     T = T,
                                     Distance = tHit,
-                                    Point = hitPoint,
-                                    Normal = normal,
+                                    PointX = hitPointX,
+                                    PointY = hitPointY,
+                                    NormalX = norm.x,
+                                    NormalY = norm.y,
                                     hitType = SweepHit.HitType.Edge,
-                                    hitObj = edge
+                                    hitObj = edge.index
                                 };
                             }
                         }
@@ -158,10 +194,10 @@ namespace PhysicsEngine
                 }
             }
 
-            CheckEndpoint(origin, radius, direction, distance, edge.P1, ref bestT, ref bestHit);
-            CheckEndpoint(origin, radius, direction, distance, edge.P2, ref bestT, ref bestHit);
+            CheckEndpoint(origin, radius, direction, distance, (edge.x1, edge.y1), ref bestT, ref bestHit);
+            CheckEndpoint(origin, radius, direction, distance, (edge.x2, edge.y2), ref bestT, ref bestHit);
 
-            if (bestT <= Fixed64.One)
+            if (bestT <= sfloat.One)
             {
                 hit = bestHit;
                 return true;
@@ -171,38 +207,40 @@ namespace PhysicsEngine
         }
 
         private static void CheckEndpoint(
-            Vector2Fixed origin, Fixed64 radius,
-            Vector2Fixed direction, Fixed64 distance,
-            Vector2Fixed endpoint,
-            ref Fixed64 bestT, ref SweepHit bestHit)
+            (sfloat x, sfloat y) origin, sfloat radius,
+            (sfloat x, sfloat y) direction, sfloat distance,
+            (sfloat x, sfloat y) endpoint,
+            ref sfloat bestT, ref SweepHit bestHit)
         {
-            Fixed64 dx = origin.X - endpoint.X;
-            Fixed64 dy = origin.Y - endpoint.Y;
+            sfloat dx = origin.x - endpoint.x;
+            sfloat dy = origin.y - endpoint.y;
 
-            Fixed64 a = Vector2Fixed.Dot(direction, direction);
-            Fixed64 b = 2 * (dx * direction.X + dy * direction.Y);
-            Fixed64 c = dx * dx + dy * dy - radius * radius;
-            Fixed64 disc = b * b - 4 * a * c;
+            sfloat a = dot(direction, direction);
+            sfloat b = (sfloat)2 * (dx * direction.x + dy * direction.y);
+            sfloat c = dx * dx + dy * dy - radius * radius;
+            sfloat disc = b * b - (sfloat)4 * a * c;
 
-            if (disc < 0) return;
+            if (disc < sfloat.Zero) return;
 
-            Fixed64 sqrtDisc = Fixed64.Sqrt(disc);
-            Fixed64 twoA = 2 * a;
+            sfloat sqrtDisc = libm.sqrtf(disc);
+            sfloat twoA = (sfloat)2 * a;
 
-            Fixed64 t1 = (-b - sqrtDisc) / twoA;
-            Fixed64 t2 = (-b + sqrtDisc) / twoA;
+            sfloat t1 = (-b - sqrtDisc) / twoA;
+            sfloat t2 = (-b + sqrtDisc) / twoA;
 
-            Fixed64 t = Fixed64.MaxValue;
-            if (t1 >= 0 && t1 <= distance) t = t1;
-            else if (t2 >= 0 && t2 <= distance) t = t2;
+            sfloat t = sfloat.MaxValue;
+            if (t1 >= sfloat.Zero && t1 <= distance) t = t1;
+            else if (t2 >= sfloat.Zero && t2 <= distance) t = t2;
 
-            if (t == Fixed64.MaxValue || Fixed64.IsInfinity(t)) return;
+            if (t == sfloat.MaxValue || isInfinity(t)) return;
 
-            Fixed64 T = t / distance;
+            sfloat T = t / distance;
             if (T >= bestT) return;
 
-            Vector2Fixed hitPoint = origin + direction * t;
-            Vector2Fixed normal = (hitPoint - endpoint).Normalized();
+            sfloat hitPointX = origin.x + direction.x * t;
+            sfloat hitPointY = origin.y + direction.y * t;
+
+            var norm = normal((hitPointX - endpoint.x, hitPointY - endpoint.y));
 
             bestT = T;
 
@@ -211,8 +249,10 @@ namespace PhysicsEngine
             {
                 T = T,
                 Distance = t,
-                Point = hitPoint,
-                Normal = normal,
+                PointX = hitPointX,
+                PointY = hitPointY,
+                NormalX = norm.x,
+                NormalY = norm.y,
                 hitType = SweepHit.HitType.Edge,
                 hitObj = obj
             };
