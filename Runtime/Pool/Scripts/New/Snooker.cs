@@ -212,7 +212,12 @@ public class Snooker
         for (int i = 0; i < holePoints.Length; i++)
         {
             var holePoint = holePoints[i];
-            holes[i] = new Circle { px = (sfloat)holePoint.x, py = (sfloat)holePoint.y, r = (sfloat)holePoint.r };
+            holes[i] = new Circle
+            {
+                px = (sfloat)holePoint.x * (sfloat)10,
+                py = (sfloat)holePoint.y * (sfloat)10,
+                r = (sfloat)holePoint.r * (sfloat)10
+            };
         }
 
         edges = new Edge[wallPoints.Length + railPoints.Length];
