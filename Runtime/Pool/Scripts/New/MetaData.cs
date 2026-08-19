@@ -124,15 +124,15 @@ namespace PhysicsEngine
             new (Fixed64.FromDouble(120.481), Fixed64.FromDouble(-32.176)),
         };
 
-        public static Circle[] holes = new Circle[]
-        {
-            new Circle(Fixed64.FromDouble(-96.000), Fixed64.FromDouble(43.000), Fixed64.FromDouble(5.700)),
-            new Circle(Fixed64.FromDouble(96.000), Fixed64.FromDouble(43.000), Fixed64.FromDouble(5.700)),
-            new Circle(Fixed64.FromDouble(-96.000), Fixed64.FromDouble(-42.700), Fixed64.FromDouble(5.700)),
-            new Circle(Fixed64.FromDouble(96.000), Fixed64.FromDouble(-42.700), Fixed64.FromDouble(5.700)),
-            new Circle(Fixed64.FromDouble(0), Fixed64.FromDouble(44.400), Fixed64.FromDouble(5.700)),
-            new Circle(Fixed64.FromDouble(0), Fixed64.FromDouble(-44.100), Fixed64.FromDouble(5.700)),
-        };
+        // public static Circle[] holes = new Circle[]
+        // {
+        //     new Circle(Fixed64.FromDouble(-96.000), Fixed64.FromDouble(43.000), Fixed64.FromDouble(5.700)),
+        //     new Circle(Fixed64.FromDouble(96.000), Fixed64.FromDouble(43.000), Fixed64.FromDouble(5.700)),
+        //     new Circle(Fixed64.FromDouble(-96.000), Fixed64.FromDouble(-42.700), Fixed64.FromDouble(5.700)),
+        //     new Circle(Fixed64.FromDouble(96.000), Fixed64.FromDouble(-42.700), Fixed64.FromDouble(5.700)),
+        //     new Circle(Fixed64.FromDouble(0), Fixed64.FromDouble(44.400), Fixed64.FromDouble(5.700)),
+        //     new Circle(Fixed64.FromDouble(0), Fixed64.FromDouble(-44.100), Fixed64.FromDouble(5.700)),
+        // };
 
         internal static Vector2Fixed dropPosition = new Vector2Fixed(111.5900, 26.800);
     }
