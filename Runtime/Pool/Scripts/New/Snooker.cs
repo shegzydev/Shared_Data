@@ -278,14 +278,14 @@ public class Snooker
         if (anywhere)
         {
             balls[0].px = sfloat.Zero;
-            balls[1].py = sfloat.Zero;
+            balls[0].py = sfloat.Zero;
         }
     }
 
     public void PlaceCue(sfloat x, sfloat y)
     {
         balls[0].px = x;
-        balls[1].py = y;
+        balls[0].py = y;
     }
 
     public void RackBalls()
