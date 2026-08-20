@@ -311,7 +311,7 @@ public class Snooker
     void FixedTick()
     {
         StepSimulation(tickDelta);
-        ticksSinceFire++;
+        if (rolling) ticksSinceFire++;
     }
 
     public void ResetCue(bool anywhere = false)
@@ -1203,28 +1203,31 @@ public class Snooker
 
     public void Reconcile(byte[] data)
     {
-        using MemoryStream stream = new MemoryStream(data);
-        using BinaryReader reader = new BinaryReader(stream);
-
-        uint ticks = reader.ReadUInt32();
-        var diff = ticksSinceFire - ticks;
-
-        foreach (var ball in balls)
+        using (MemoryStream stream = new MemoryStream(data))
         {
-            ball.px = sfloat.FromRaw(reader.ReadUInt32());
-            ball.py = sfloat.FromRaw(reader.ReadUInt32());
-            ball.vx = sfloat.FromRaw(reader.ReadUInt32());
-            ball.vy = sfloat.FromRaw(reader.ReadUInt32());
+            using (BinaryReader reader = new BinaryReader(stream))
+            {
+                uint ticks = reader.ReadUInt32();
+
+                if (ticksSinceFire < ticks) return;
+
+                var diff = ticksSinceFire - ticks;
+
+                foreach (var ball in balls)
+                {
+                    ball.px = sfloat.FromRaw(reader.ReadUInt32());
+                    ball.py = sfloat.FromRaw(reader.ReadUInt32());
+                    ball.vx = sfloat.FromRaw(reader.ReadUInt32());
+                    ball.vy = sfloat.FromRaw(reader.ReadUInt32());
+                }
+
+                ticksSinceFire = ticks;
+
+                for (int i = 0; i < diff; i++)
+                {
+                    FixedTick();
+                }
+            }
         }
-
-        ticksSinceFire = ticks;
-
-        for (int i = 0; i < diff; i++)
-        {
-            FixedTick();
-        }
-
-        reader.Dispose();
-        stream.Dispose();
     }
 }
