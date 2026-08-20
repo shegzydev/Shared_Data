@@ -411,7 +411,7 @@ public class Snooker
     List<CollisionResult> validContacts = new();
 
     List<CollisionResult> persistentContacts = new();
-    List<int> dirtyBalls = new(); // balls whose velocity changed this fixed tick
+    List<int> dirtyBalls = new();
 
     public void StepSimulation(sfloat dt)
     {
@@ -419,7 +419,6 @@ public class Snooker
         int maxIterations = 64;
         int iterations = 0;
 
-        // Full rebuild only once, at the start of the fixed tick
         persistentContacts.Clear();
         persistentContacts.AddRange(GetContacts(remaining));
         dirtyBalls.Clear();
@@ -996,6 +995,7 @@ public class Snooker
             a.vy -= impulse * ny;
             b.vx += impulse * nx;
             b.vy += impulse * ny;
+
         }
 
         // --- Penetration correction (push apart if overlapping) ---
@@ -1014,7 +1014,7 @@ public class Snooker
         contactHash[a.number].Add((-nx, -ny));
         contactHash[b.number].Add((nx, ny));
 
-        OnBallCollision((a, b));
+        if (velAlongNormal > sfloat.Zero) OnBallCollision((a, b));
     }
 
     void ResolveCollisionEdge(Ball a, Edge edge)
@@ -1087,6 +1087,8 @@ public class Snooker
             sfloat j = -((sfloat)1 + edge.restitution) * velAlongNormal;
             a.vx += j * dx;
             a.vy += j * dy;
+
+            OnEdgeCollision((a, edge));
         }
 
         // --- Penetration correction ---
@@ -1099,8 +1101,6 @@ public class Snooker
         }
 
         contactHash[a.number].Add((dx, dy));
-
-        OnEdgeCollision((a, edge));
     }
 
     void ApplyFriction(Ball a, sfloat dt)
