@@ -92,7 +92,7 @@ namespace PoolEngine
 
             OnBreak.Invoke(turn);
 
-            physics = new Snooker(1, -9.81f);
+            physics = new Snooker(1, -60f);
 
             HandleEvents();
             RackUp(false);
@@ -622,6 +622,11 @@ namespace PoolEngine
                     }
                 }
             }
+        }
+
+        public float GetEnergy()
+        {
+            return physics.GetEnergy();
         }
     }
 }

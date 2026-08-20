@@ -1,6 +1,7 @@
 using SoftFloat;
 using System.Collections.Generic;
 using System;
+using System.Linq;
 
 public class SnookerGame
 {
@@ -37,6 +38,9 @@ public class Snooker
         public int indexB;
         public sfloat toi;
 
+        public sfloat nx;
+        public sfloat ny;
+
         public bool isEdge;
     }
 
@@ -62,7 +66,36 @@ public class Snooker
     {
         public sfloat x1, y1;
         public sfloat x2, y2;
+
         public int index;
+        public sfloat restitution = sfloat.One;
+
+        public sfloat nx, ny;
+        public sfloat tx, ty;
+        public sfloat edgeLen;
+        public sfloat midX, midY;
+        public sfloat boundRadius;
+
+        public Edge Precompute()
+        {
+            sfloat ex = x2 - x1;
+            sfloat ey = y2 - y1;
+
+            sfloat edgeLenSq = ex * ex + ey * ey;
+            edgeLen = libm.sqrtf(edgeLenSq);
+            boundRadius = edgeLen / (sfloat)2;
+
+            tx = ex / edgeLen;
+            ty = ey / edgeLen;
+
+            nx = -ty;
+            ny = tx;
+
+            midX = (x2 + x1) / (sfloat)2;
+            midY = (y2 + y1) / (sfloat)2;
+
+            return this;
+        }
     }
 
     (float x, float y)[] rack = new[]
@@ -192,7 +225,7 @@ public class Snooker
     sfloat friction;
     sfloat gravity = (sfloat)9.81;
 
-    //0:cueball 
+    //0:cueball
     //1-7:solids
     //8: black
     //9-15: stripes
@@ -232,8 +265,9 @@ public class Snooker
                 y1 = (sfloat)p1.y * (sfloat)10,
                 x2 = (sfloat)p2.x * (sfloat)10,
                 y2 = (sfloat)p2.y * (sfloat)10,
-                index = i
-            };
+                index = i,
+                restitution = sfloat.One
+            }.Precompute();
         }
         for (int i = 0; i < railPoints.Length; i++)
         {
@@ -245,8 +279,15 @@ public class Snooker
                 y1 = (sfloat)p1.y * (sfloat)10,
                 x2 = (sfloat)p2.x * (sfloat)10,
                 y2 = (sfloat)p2.y * (sfloat)10,
-                index = i + wallPoints.Length
-            };
+                index = i + wallPoints.Length,
+                restitution = sfloat.Zero
+            }.Precompute();
+        }
+
+        contactHash = new List<(sfloat nx, sfloat ny)>[balls.Length];
+        for (int i = 0; i < contactHash.Length; i++)
+        {
+            contactHash[i] = new();
         }
     }
 
@@ -259,15 +300,13 @@ public class Snooker
             accumulator -= tickDelta;
             FixedTick();
         }
+
+        CheckPocketed();
     }
 
     void FixedTick()
     {
         StepSimulation(tickDelta);
-
-        ApplyFrictionAll();
-
-        CheckPocketed();
     }
 
     public void ResetCue(bool anywhere = false)
@@ -309,18 +348,17 @@ public class Snooker
         }
     }
 
-    void ApplyFrictionAll()
+    void ApplyFrictionAll(sfloat dt)
     {
-        var before = GetEnergy();
-
         for (int i = 0; i < balls.Length; i++)
         {
-            ApplyFriction(balls[i], tickDelta);
+            ApplyFriction(balls[i], dt);
         }
 
-        if (GetEnergy() < 0.001f && before > 0.001f)
+        if (rolling && GetTotalSpeedSqr() == sfloat.Zero)
         {
             Stopped();
+            rolling = false;
         }
     }
 
@@ -335,14 +373,23 @@ public class Snooker
                 var dx = ball.px - hole.px;
                 var dy = ball.py - hole.py;
 
-                var dist = libm.sqrtf(dx * dx + dy * dy);
+                // var dist = libm.sqrtf(dx * dx + dy * dy);
+                var dist = (dx * dx + dy * dy);
 
-                if (dist + ball.r <= hole.r * (sfloat)1.2)
+                var diff = libm.powf(hole.r * (sfloat)1.2 + ball.r, (sfloat)2);
+
+                // if (dist + ball.r <= hole.r * (sfloat)1.2)
+                if (dist <= diff)
                 {
                     ball.potted = true;
 
                     ball.px = dropPosition.x * (sfloat)10;
                     ball.py = dropPosition.y * (sfloat)10;
+
+                    var speed = libm.sqrtf(ball.vx * ball.vx + ball.vy * ball.vy);
+
+                    ball.vx = speed;
+                    ball.vy = sfloat.Zero;
 
                     OnHole((ball, hole));
                 }
@@ -350,27 +397,38 @@ public class Snooker
         }
     }
 
+    bool rolling = false;
     public void Fire(sfloat vx, sfloat vy)
     {
         balls[0].vx = vx;
         balls[0].vy = vy;
+        rolling = true;
     }
 
+    List<(sfloat nx, sfloat ny)>[] contactHash;
+
+    List<CollisionResult> validContacts = new();
     public void StepSimulation(sfloat dt)
     {
         sfloat remaining = dt;
 
-        int maxIterations = 32;
+        int maxIterations = 8;
         int iterations = 0;
 
         while (remaining > (sfloat)0 && iterations < maxIterations)
         {
             iterations++;
 
-            var contacts = GetContacts(remaining);
-            bool hit = contacts.Count > 0;
+            ApplyGravity(remaining);
 
-            if (!hit)
+            ApplyFrictionAll(remaining);
+
+            var contacts = GetContacts(remaining);
+
+            for (int i = 0; i < contactHash.Length; i++)
+                contactHash[i].Clear();
+
+            if (contacts.Count == 0)
             {
                 AdvanceAll(remaining);
                 remaining = (sfloat)0;
@@ -380,9 +438,8 @@ public class Snooker
             contacts.Sort((a, b) => a.toi.CompareTo(b.toi));
 
             CollisionResult col = contacts[0];
-            for (int i = 0; i < contacts.Count; i++)
+            foreach (var contact in contacts)
             {
-                var contact = contacts[i];
                 if (contact.toi > sfloat.Zero)
                 {
                     col = contact;
@@ -392,24 +449,54 @@ public class Snooker
 
             if (col.toi == sfloat.Zero)
             {
-                AdvanceAll(remaining);
-                break;
+                sfloat epsilon = (sfloat)0.002;
+                AdvanceAll(epsilon);
+                remaining -= epsilon;
+                continue;
             }
 
             AdvanceAll(col.toi);
             remaining -= col.toi;
 
-            for (int i = 0; i < contacts.Count; i++)
+            validContacts.Clear();
+            foreach (var contact in contacts)
             {
-                var contact = contacts[i];
-
-                if (contact.isEdge)
-                    ResolveCollisionEdge(balls[contact.indexA], edges[contact.indexB], (sfloat)1);
-                else
-                    ResolveCollisionBall(balls[contact.indexA], balls[contact.indexB]);
-
+                validContacts.Add(contact);
                 if (contact.toi > sfloat.Zero) break;
             }
+
+            ResolveCCDContactsBatch(validContacts);
+        }
+    }
+
+    void ResolveCCDContactsBatch(List<CollisionResult> contacts)
+    {
+        for (int iter = 0; iter < 8; iter++)
+        {
+            foreach (var contact in contacts)
+            {
+                if (contact.isEdge)
+                {
+                    ResolveCollisionEdge(balls[contact.indexA], edges[contact.indexB]);
+                }
+                else
+                {
+                    ResolveCollisionBall(balls[contact.indexA], balls[contact.indexB]);
+                }
+            }
+        }
+    }
+
+    void ApplyGravity(sfloat t)
+    {
+        for (int i = 0; i < balls.Length; i++)
+        {
+            Ball a = balls[i];
+
+            if (!a.potted) continue;
+            if (contactHash[a.number].Any((n) => n.ny > (sfloat)0.965)) continue;
+
+            a.vy += gravity * t;
         }
     }
 
@@ -419,28 +506,112 @@ public class Snooker
         {
             Ball bl = balls[i];
 
-            if (bl.potted) bl.vy += gravity * t;
-
             bl.px += bl.vx * t;
             bl.py += bl.vy * t;
         }
     }
 
+    public void SolveDiscrete(Ball ball, Edge edge)
+    {
+        sfloat ex = edge.x2 - edge.x1;
+        sfloat ey = edge.y2 - edge.y1;
+        sfloat lengthSquared = ex * ex + ey * ey;
+
+        if (lengthSquared == sfloat.Zero)
+        {
+            return;
+        }
+
+        // Project point onto the line, clamp t to [0, 1] to stay on the segment
+        sfloat t = ((ball.px - edge.x1) * ex + (ball.py - edge.y1) * ey) / lengthSquared;
+        t = sfloat.Max(sfloat.Zero, sfloat.Min(sfloat.One, t));
+
+        sfloat closestX = edge.x1 + t * ex;
+        sfloat closestY = edge.y1 + t * ey;
+
+        sfloat dx = ball.px - closestX;
+        sfloat dy = ball.py - closestY;
+
+        sfloat dist = libm.sqrtf(dx * dx + dy * dy);
+
+        if (dist > ball.r) return;
+
+        (sfloat x, sfloat y) normal;
+
+        if (dist < sfloat.Epsilon)
+            normal = (ey, -ex);
+        else
+            normal = (dx / dist, dy / dist);
+
+        sfloat overlap = ball.r - dist;
+
+        ball.px += normal.x * overlap;
+        ball.py += normal.y * overlap;
+
+        sfloat velDotNormal = (ball.vx * normal.x + ball.vy * normal.y);
+        if (velDotNormal > sfloat.Zero) return;
+
+        ball.vx -= (sfloat.One + edge.restitution) * velDotNormal * normal.x;
+        ball.vy -= (sfloat.One + edge.restitution) * velDotNormal * normal.y;
+    }
+
+    public void SolveDiscrete(Ball a, Ball b)
+    {
+        sfloat dx = b.px - a.px;
+        sfloat dy = b.py - a.py;
+
+        sfloat dist = libm.sqrtf(dx * dx + dy * dy);
+        sfloat minDist = a.r + b.r;
+
+        if (dist > minDist) return;
+
+        (sfloat x, sfloat y) normal;
+        if (dist < sfloat.Epsilon)
+            normal = (sfloat.One, sfloat.Zero);
+        else
+            normal = (dx / dist, dy / dist);
+
+        sfloat overlap = minDist - dist;
+
+        sfloat correctionX = normal.x * overlap * (sfloat)0.5;
+        sfloat correctionY = normal.y * overlap * (sfloat)0.5;
+
+        a.px -= correctionX;
+        a.py -= correctionY;
+
+        b.px += correctionX;
+        b.py += correctionY;
+
+        (sfloat x, sfloat y) rv = (b.vx - a.vx, b.vy - a.vy);
+        sfloat velAlong = rv.x * normal.x + rv.y * normal.y;
+
+        if (velAlong > sfloat.Zero) return;
+
+        sfloat e = sfloat.One;
+        sfloat impulse = -(sfloat.One + e) * velAlong / (sfloat)2.0;
+
+        a.vx -= normal.x * impulse;
+        a.vy -= normal.y * impulse;
+
+        b.vx += normal.x * impulse;
+        b.vy += normal.y * impulse;
+    }
+
+    List<CollisionResult> _contacts = new();
     List<CollisionResult> GetContacts(sfloat dt)
     {
-        List<CollisionResult> contacts = new();
+        _contacts.Clear();
 
         for (int i = 0; i < balls.Length; i++)
         {
             Ball a = balls[i];
-
             for (int j = i + 1; j < balls.Length; j++)
             {
                 Ball b = balls[j];
 
                 if (GetTimeOfImpactBall(a, b, out sfloat toi) && toi < dt)
                 {
-                    contacts.Add(new CollisionResult
+                    _contacts.Add(new CollisionResult
                     {
                         indexA = i,
                         indexB = j,
@@ -455,13 +626,20 @@ public class Snooker
         {
             Ball a = balls[i];
 
+            sfloat maxTravel = libm.sqrtf(a.vx * a.vx + a.vy * a.vy) * dt + a.r;
+
             for (int j = 0; j < edges.Length; j++)
             {
                 Edge b = edges[j];
 
+                sfloat dx = a.px - b.midX;
+                sfloat dy = a.py - b.midY;
+                sfloat reach = maxTravel + b.boundRadius;
+                if (dx * dx + dy * dy > reach * reach) continue;
+
                 if (GetTimeOfImpactEdge(a, b, out sfloat toi) && toi < dt)
                 {
-                    contacts.Add(new CollisionResult
+                    _contacts.Add(new CollisionResult
                     {
                         indexA = i,
                         indexB = j,
@@ -472,7 +650,7 @@ public class Snooker
             }
         }
 
-        return contacts;
+        return _contacts;
     }
 
     bool GetTimeOfImpactBall(Ball a, Ball b, out sfloat toi)
@@ -517,7 +695,6 @@ public class Snooker
         toi = t;
         return true;
     }
-
     bool GetTimeOfImpactEdge(Ball a, Edge edge, out sfloat toi)
     {
         toi = sfloat.MaxValue; // or your sfloat equivalent of "infinity"
@@ -550,21 +727,10 @@ public class Snooker
     {
         toi = (sfloat)0;
 
-        sfloat ex = edge.x2 - edge.x1;
-        sfloat ey = edge.y2 - edge.y1;
-        sfloat edgeLenSq = ex * ex + ey * ey;
-        if (edgeLenSq == (sfloat)0) return false;
-
-        sfloat edgeLen = libm.sqrtf(edgeLenSq);
-        sfloat tx = ex / edgeLen;
-        sfloat ty = ey / edgeLen;
-        sfloat nx = -ty;
-        sfloat ny = tx;
-
         sfloat rx = a.px - edge.x1;
         sfloat ry = a.py - edge.y1;
-        sfloat distToLine = rx * nx + ry * ny;
-        sfloat velAlongNormal = a.vx * nx + a.vy * ny;
+        sfloat distToLine = rx * edge.nx + ry * edge.ny;
+        sfloat velAlongNormal = a.vx * edge.nx + a.vy * edge.ny;
 
         sfloat sign = distToLine >= (sfloat)0 ? (sfloat)1 : (sfloat)(-1);
         sfloat targetDist = sign * a.r;
@@ -587,10 +753,10 @@ public class Snooker
         sfloat cy = a.py + a.vy * toi;
         sfloat px = cx - edge.x1;
         sfloat py = cy - edge.y1;
-        sfloat tParam = px * tx + py * ty;
+        sfloat tParam = px * edge.tx + py * edge.ty;
 
         // Only valid if contact point is actually within the segment
-        return tParam >= (sfloat)0 && tParam <= edgeLen;
+        return tParam >= (sfloat)0 && tParam <= edge.edgeLen;
     }
     bool GetTimeOfImpactPoint(Ball a, sfloat px, sfloat py, out sfloat toi)
     {
@@ -603,7 +769,7 @@ public class Snooker
         sfloat B = (sfloat)(-2) * (dpx * a.vx + dpy * a.vy);
         sfloat C = dpx * dpx + dpy * dpy - a.r * a.r;
 
-        if (C < (sfloat)0)
+        if (C <= (sfloat)0)
         {
             toi = (sfloat)0;
             return true;
@@ -668,17 +834,20 @@ public class Snooker
 
         if (penetration > (sfloat)0)
         {
-            a.px -= penetration * nx * (sfloat)0.5;
-            a.py -= penetration * ny * (sfloat)0.5;
+            a.px -= penetration * nx * (sfloat)0.1;
+            a.py -= penetration * ny * (sfloat)0.1;
 
-            b.px += penetration * nx * (sfloat)0.5;
-            b.py += penetration * ny * (sfloat)0.5;
+            b.px += penetration * nx * (sfloat)0.1;
+            b.py += penetration * ny * (sfloat)0.1;
         }
+
+        contactHash[a.number].Add((-nx, -ny));
+        contactHash[b.number].Add((nx, ny));
 
         OnBallCollision((a, b));
     }
 
-    void ResolveCollisionEdge(Ball a, Edge edge, sfloat restitution)
+    void ResolveCollisionEdge(Ball a, Edge edge)
     {
         // Edge tangent/normal (unit vectors)
         sfloat ex = edge.x2 - edge.x1;
@@ -745,7 +914,7 @@ public class Snooker
 
         if (velAlongNormal < (sfloat)0) // moving into the cushion
         {
-            sfloat j = -((sfloat)1 + restitution) * velAlongNormal;
+            sfloat j = -((sfloat)1 + edge.restitution) * velAlongNormal;
             a.vx += j * dx;
             a.vy += j * dy;
         }
@@ -759,6 +928,8 @@ public class Snooker
             a.py += dy * penetration;
         }
 
+        contactHash[a.number].Add((dx, dy));
+
         OnEdgeCollision((a, edge));
     }
 
@@ -766,6 +937,7 @@ public class Snooker
     {
         a.vx *= sfloat.One / (sfloat.One + dt * friction);
         a.vy *= sfloat.One / (sfloat.One + dt * friction);
+
         var speed = a.vx * a.vx + a.vy * a.vy;
         if (speed < (sfloat)1)
         {
@@ -804,6 +976,21 @@ public class Snooker
         }
 
         return (float)energy;
+    }
+
+    public sfloat GetTotalSpeedSqr()
+    {
+        sfloat totalSpeed = sfloat.Zero;
+
+        for (int i = 0; i < balls.Length; i++)
+        {
+            Ball b = balls[i];
+            if (b.potted) continue;
+
+            totalSpeed += b.vx * b.vx + b.vy * b.vy;
+        }
+
+        return totalSpeed;
     }
 
     public int[] GetPotted()
