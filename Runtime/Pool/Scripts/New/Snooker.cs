@@ -1182,6 +1182,8 @@ public class Snooker
 
     public byte[] GetBallsState()
     {
+        if (ticksSinceFire < 1 || !rolling) throw new Exception("Not Ready");
+
         using MemoryStream stream = new MemoryStream();
         using BinaryWriter writer = new BinaryWriter(stream);
 
@@ -1203,6 +1205,8 @@ public class Snooker
 
     public void Reconcile(byte[] data)
     {
+        if (ticksSinceFire < 1 || !rolling) return;
+
         using (MemoryStream stream = new MemoryStream(data))
         {
             using (BinaryReader reader = new BinaryReader(stream))
