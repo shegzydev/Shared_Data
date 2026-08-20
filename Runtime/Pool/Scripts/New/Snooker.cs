@@ -2,7 +2,6 @@ using SoftFloat;
 using System.Collections.Generic;
 using System;
 using System.Linq;
-using UnityEngine;
 
 public class SnookerGame
 {
@@ -413,7 +412,7 @@ public class Snooker
     {
         sfloat remaining = dt;
 
-        int maxIterations = 12;
+        int maxIterations = 8;
         int iterations = 0;
 
         while (remaining > (sfloat)0 && iterations < maxIterations)
@@ -495,7 +494,6 @@ public class Snooker
         {
             for (int i = 0; i < balls.Length; i++)
             {
-                if (!balls[i].potted) continue;
                 for (int j = i + 1; j < balls.Length; j++)
                 {
                     SolveDiscrete(balls[i], balls[j]);
@@ -504,7 +502,6 @@ public class Snooker
 
             for (int i = 0; i < balls.Length; i++)
             {
-                if (!balls[i].potted) continue;
                 for (int j = 0; j < edges.Length; j++)
                 {
                     SolveDiscrete(balls[i], edges[j]);
