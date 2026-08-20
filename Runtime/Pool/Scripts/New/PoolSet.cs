@@ -92,7 +92,7 @@ namespace PoolEngine
 
             OnBreak.Invoke(turn);
 
-            physics = new Snooker(0.5f, -60f);
+            physics = new Snooker(0.5f, -150f);
 
             HandleEvents();
             RackUp(false);
@@ -385,8 +385,8 @@ namespace PoolEngine
         {
             physics.RackBalls();
 
-            solids = new HashSet<int>(Enumerable.Range(1, 7));
-            stripes = new HashSet<int>(Enumerable.Range(9, 7));
+            solids = new HashSet<int>(new int[] { 1, 2, 3, 4, 5, 6, 7 });
+            stripes = new HashSet<int>(new int[] { 9, 10, 11, 12, 13, 14, 15 });
 
             gameState = State.Breaking;
 

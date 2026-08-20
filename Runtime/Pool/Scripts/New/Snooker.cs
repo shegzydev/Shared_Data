@@ -32,7 +32,7 @@ public class Logger
 
 public class Snooker
 {
-    public struct CollisionResult
+    public class CollisionResult
     {
         public int indexA;
         public int indexB;
@@ -55,6 +55,7 @@ public class Snooker
         public sfloat vx, vy;
         public sfloat wx, wy, wz;
         public sfloat r = (sfloat)2.925;
+
         public bool potted;
         public int number;
 
@@ -376,7 +377,7 @@ public class Snooker
                 // var dist = libm.sqrtf(dx * dx + dy * dy);
                 var dist = (dx * dx + dy * dy);
 
-                var diff = libm.powf(hole.r * (sfloat)1.2 + ball.r, (sfloat)2);
+                var diff = libm.powf(hole.r * (sfloat)1.2 - ball.r, (sfloat)2);
 
                 // if (dist + ball.r <= hole.r * (sfloat)1.2)
                 if (dist <= diff)
@@ -408,7 +409,149 @@ public class Snooker
     List<(sfloat nx, sfloat ny)>[] contactHash;
 
     List<CollisionResult> validContacts = new();
+
+    List<CollisionResult> persistentContacts = new();
+    HashSet<int> dirtyBalls = new(); // balls whose velocity changed this fixed tick
+
     public void StepSimulation(sfloat dt)
+    {
+        sfloat remaining = dt;
+        int maxIterations = 64;
+        int iterations = 0;
+
+        // Full rebuild only once, at the start of the fixed tick
+        persistentContacts.Clear();
+        persistentContacts.AddRange(GetContacts(remaining));
+        dirtyBalls.Clear();
+
+        while (remaining > (sfloat)0 && iterations < maxIterations)
+        {
+            iterations++;
+
+            for (int i = 0; i < contactHash.Length; i++)
+                contactHash[i].Clear();
+
+            if (persistentContacts.Count == 0)
+            {
+                AdvanceAll(remaining);
+                remaining = (sfloat)0;
+                break;
+            }
+
+            sfloat minToi = sfloat.MaxValue;
+
+            CollisionResult col = null;
+            foreach (var c in persistentContacts)
+            {
+                if (c.toi > sfloat.Zero && c.toi < minToi)
+                {
+                    col = c;
+                    minToi = c.toi;
+                }
+            }
+
+            if (col == null || col.toi == sfloat.Zero)
+            {
+                sfloat epsilon = (sfloat)0.002;
+                AdvanceAll(epsilon);
+                remaining -= epsilon;
+                RebuildContacts(remaining); // cheap fallback path, rare
+                continue;
+            }
+
+            AdvanceAll(col.toi);
+            remaining -= col.toi;
+
+            validContacts.Clear();
+            foreach (var c in persistentContacts)
+            {
+                if (c.toi <= col.toi)
+                    validContacts.Add(c);
+            }
+
+            // Mark which balls are about to get new velocities
+            dirtyBalls.Clear();
+            foreach (var c in validContacts)
+            {
+                dirtyBalls.Add(c.indexA);
+                if (!c.isEdge) dirtyBalls.Add(c.indexB);
+            }
+
+            ResolveCCDContactsBatch(validContacts);
+
+            // ---- Incremental contact update instead of full GetContacts ----
+            UpdateContactsIncremental(col.toi, remaining);
+        }
+
+        RemoveOverlaps();
+
+        ApplyGravity(dt);
+        ApplyFrictionAll(dt);
+    }
+
+    void UpdateContactsIncremental(sfloat elapsed, sfloat remaining)
+    {
+        // 1. Drop consumed/stale contacts, age the rest, drop anything touching a dirty ball
+        for (int i = persistentContacts.Count - 1; i >= 0; i--)
+        {
+            var c = persistentContacts[i];
+
+            bool touchesDirty = dirtyBalls.Contains(c.indexA) ||
+                                 (!c.isEdge && dirtyBalls.Contains(c.indexB));
+
+            if (touchesDirty)
+            {
+                persistentContacts.RemoveAt(i);
+                continue;
+            }
+
+            c.toi -= elapsed;
+            if (c.toi < sfloat.Zero) c.toi = sfloat.Zero; // consumed this step, still might refire
+            persistentContacts[i] = c;
+        }
+
+        // 2. Recompute contacts only for dirty balls against everything else
+        foreach (int i in dirtyBalls)
+        {
+            Ball a = balls[i];
+            if (a.potted) continue;
+
+            for (int j = 0; j < balls.Length; j++)
+            {
+                if (j == i) continue;
+                Ball b = balls[j];
+                if (b.potted) continue;
+
+                // avoid duplicate pair (i,j)/(j,i): only add once
+                if (j > i || !dirtyBalls.Contains(j)) // if both dirty, only lower index adds it
+                {
+                    if (GetTimeOfImpactBall(a, b, out sfloat toi) && toi < remaining)
+                    {
+                        int lo = Math.Min(i, j), hi = Math.Max(i, j);
+                        persistentContacts.Add(new CollisionResult
+                        { indexA = lo, indexB = hi, toi = toi, isEdge = false });
+                    }
+                }
+            }
+
+            for (int e = 0; e < edges.Length; e++)
+            {
+                if (GetTimeOfImpactEdge(a, edges[e], out sfloat toi) && toi < remaining)
+                {
+                    persistentContacts.Add(new CollisionResult
+                    { indexA = i, indexB = e, toi = toi, isEdge = true });
+                }
+            }
+        }
+    }
+
+    void RebuildContacts(sfloat remaining)
+    {
+        persistentContacts.Clear();
+        persistentContacts.AddRange(GetContacts(remaining));
+    }
+
+    /*public void StepSimulation(sfloat dt)
     {
         sfloat remaining = dt;
 
@@ -420,8 +563,6 @@ public class Snooker
             iterations++;
 
             ApplyGravity(remaining);
-
-            ApplyFrictionAll(remaining);
 
             var contacts = GetContacts(remaining);
 
@@ -471,7 +612,7 @@ public class Snooker
         }
 
         RemoveOverlaps();
-    }
+    }*/
 
     void ResolveCCDContactsBatch(List<CollisionResult> contacts)
     {
@@ -577,6 +718,8 @@ public class Snooker
 
         ball.vx -= (sfloat.One + edge.restitution) * velDotNormal * normal.x;
         ball.vy -= (sfloat.One + edge.restitution) * velDotNormal * normal.y;
+
+        contactHash[ball.number].Add((normal.x, normal.y));
     }
 
     public void SolveDiscrete(Ball a, Ball b)
@@ -619,6 +762,9 @@ public class Snooker
 
         b.vx += normal.x * impulse;
         b.vy += normal.y * impulse;
+
+        contactHash[a.number].Add((-normal.x, -normal.y));
+        contactHash[b.number].Add((normal.x, normal.y));
     }
 
     List<CollisionResult> _contacts = new();
@@ -644,14 +790,8 @@ public class Snooker
                     });
                 }
             }
-        }
-
-        for (int i = 0; i < balls.Length; i++)
-        {
-            Ball a = balls[i];
 
             sfloat maxTravel = libm.sqrtf(a.vx * a.vx + a.vy * a.vy) * dt + a.r;
-
             for (int j = 0; j < edges.Length; j++)
             {
                 Edge b = edges[j];
