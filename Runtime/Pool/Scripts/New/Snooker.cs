@@ -411,7 +411,7 @@ public class Snooker
     List<CollisionResult> validContacts = new();
 
     List<CollisionResult> persistentContacts = new();
-    HashSet<int> dirtyBalls = new(); // balls whose velocity changed this fixed tick
+    List<int> dirtyBalls = new(); // balls whose velocity changed this fixed tick
 
     public void StepSimulation(sfloat dt)
     {
@@ -489,6 +489,7 @@ public class Snooker
         ApplyFrictionAll(dt);
     }
 
+    HashSet<int> checkedDirty = new();
     void UpdateContactsIncremental(sfloat elapsed, sfloat remaining)
     {
         // 1. Drop consumed/stale contacts, age the rest, drop anything touching a dirty ball
@@ -511,8 +512,13 @@ public class Snooker
         }
 
         // 2. Recompute contacts only for dirty balls against everything else
+        checkedDirty.Clear();
         foreach (int i in dirtyBalls)
         {
+            if (checkedDirty.Contains(i)) continue;
+
+            checkedDirty.Add(i);
+
             Ball a = balls[i];
             if (a.potted) continue;
 
