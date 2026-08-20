@@ -92,7 +92,7 @@ namespace PoolEngine
 
             OnBreak.Invoke(turn);
 
-            physics = new Snooker(1, -60f);
+            physics = new Snooker(0.5f, -60f);
 
             HandleEvents();
             RackUp(false);

@@ -2,6 +2,7 @@ using SoftFloat;
 using System.Collections.Generic;
 using System;
 using System.Linq;
+using UnityEngine;
 
 public class SnookerGame
 {
@@ -412,7 +413,7 @@ public class Snooker
     {
         sfloat remaining = dt;
 
-        int maxIterations = 8;
+        int maxIterations = 12;
         int iterations = 0;
 
         while (remaining > (sfloat)0 && iterations < maxIterations)
@@ -459,29 +460,54 @@ public class Snooker
             remaining -= col.toi;
 
             validContacts.Clear();
+            sfloat nonzero = sfloat.Zero;
             foreach (var contact in contacts)
             {
+                if (contact.toi > nonzero && nonzero > sfloat.Zero) break;
                 validContacts.Add(contact);
-                if (contact.toi > sfloat.Zero) break;
+                nonzero = contact.toi;
             }
 
             ResolveCCDContactsBatch(validContacts);
         }
+
+        RemoveOverlaps();
     }
 
     void ResolveCCDContactsBatch(List<CollisionResult> contacts)
     {
+        foreach (var contact in contacts)
+        {
+            if (contact.isEdge)
+            {
+                ResolveCollisionEdge(balls[contact.indexA], edges[contact.indexB]);
+            }
+            else
+            {
+                ResolveCollisionBall(balls[contact.indexA], balls[contact.indexB]);
+            }
+        }
+    }
+
+    void RemoveOverlaps()
+    {
         for (int iter = 0; iter < 8; iter++)
         {
-            foreach (var contact in contacts)
+            for (int i = 0; i < balls.Length; i++)
             {
-                if (contact.isEdge)
+                if (!balls[i].potted) continue;
+                for (int j = i + 1; j < balls.Length; j++)
                 {
-                    ResolveCollisionEdge(balls[contact.indexA], edges[contact.indexB]);
+                    SolveDiscrete(balls[i], balls[j]);
                 }
-                else
+            }
+
+            for (int i = 0; i < balls.Length; i++)
+            {
+                if (!balls[i].potted) continue;
+                for (int j = 0; j < edges.Length; j++)
                 {
-                    ResolveCollisionBall(balls[contact.indexA], balls[contact.indexB]);
+                    SolveDiscrete(balls[i], edges[j]);
                 }
             }
         }
@@ -515,7 +541,8 @@ public class Snooker
     {
         sfloat ex = edge.x2 - edge.x1;
         sfloat ey = edge.y2 - edge.y1;
-        sfloat lengthSquared = ex * ex + ey * ey;
+
+        sfloat lengthSquared = edge.edgeLen * edge.edgeLen;
 
         if (lengthSquared == sfloat.Zero)
         {
@@ -832,14 +859,14 @@ public class Snooker
         sfloat rSum = a.r + b.r;
         sfloat penetration = rSum - dist;
 
-        if (penetration > (sfloat)0)
-        {
-            a.px -= penetration * nx * (sfloat)0.1;
-            a.py -= penetration * ny * (sfloat)0.1;
+        // if (penetration > (sfloat)0)
+        // {
+        //     a.px -= penetration * nx * (sfloat)0.1;
+        //     a.py -= penetration * ny * (sfloat)0.1;
 
-            b.px += penetration * nx * (sfloat)0.1;
-            b.py += penetration * ny * (sfloat)0.1;
-        }
+        //     b.px += penetration * nx * (sfloat)0.1;
+        //     b.py += penetration * ny * (sfloat)0.1;
+        // }
 
         contactHash[a.number].Add((-nx, -ny));
         contactHash[b.number].Add((nx, ny));
@@ -924,8 +951,8 @@ public class Snooker
 
         if (penetration > (sfloat)0)
         {
-            a.px += dx * penetration;
-            a.py += dy * penetration;
+            // a.px += dx * penetration;
+            // a.py += dy * penetration;
         }
 
         contactHash[a.number].Add((dx, dy));
@@ -947,7 +974,6 @@ public class Snooker
     }
 
     private (float px, float py, float vx, float vy)[] state;
-
     public (float px, float py, float vx, float vy)[] GetBallData()
     {
         if (state == null || state.Length != balls.Length)
