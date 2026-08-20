@@ -7,7 +7,7 @@ using SoftFloat;
 
 public enum PoolNetEvents : byte
 {
-    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack, Foul, Scratch, Rejoin
+    Ready, TurnSwitch, Balls, Shoot, Timer, EndGame, Aim, State, Assign, CueSet, Rerack, Foul, Scratch, Rejoin, Recon
 }
 
 namespace PoolEngine
@@ -57,6 +57,9 @@ namespace PoolEngine
 
         public Snooker.Ball cueBall => physics.GetBalls[0];
         public Snooker.Ball[] GetBalls => physics.GetBalls;
+
+        public byte[] GetBallState => physics.GetBallsState();
+        public void Reconcile(byte[] data) => physics.Reconcile(data);
 
         HashSet<int>[] targets = new HashSet<int>[2]
         {

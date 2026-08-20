@@ -2,6 +2,7 @@ using SoftFloat;
 using System.Collections.Generic;
 using System;
 using System.Linq;
+using System.IO;
 
 public class SnookerGame
 {
@@ -226,6 +227,8 @@ public class Snooker
     sfloat friction;
     sfloat gravity = (sfloat)9.81;
 
+    uint ticksSinceFire = 0;
+
     //0:cueball
     //1-7:solids
     //8: black
@@ -308,6 +311,7 @@ public class Snooker
     void FixedTick()
     {
         StepSimulation(tickDelta);
+        ticksSinceFire++;
     }
 
     public void ResetCue(bool anywhere = false)
@@ -404,6 +408,7 @@ public class Snooker
         balls[0].vx = vx;
         balls[0].vy = vy;
         rolling = true;
+        ticksSinceFire = 0;
     }
 
     List<(sfloat nx, sfloat ny)>[] contactHash;
@@ -1173,5 +1178,53 @@ public class Snooker
         }
 
         return potted.ToArray();
+    }
+
+    public byte[] GetBallsState()
+    {
+        using MemoryStream stream = new MemoryStream();
+        using BinaryWriter writer = new BinaryWriter(stream);
+
+        writer.Write(ticksSinceFire);
+
+        foreach (var ball in balls)
+        {
+            writer.Write(ball.px.RawValue);
+            writer.Write(ball.py.RawValue);
+            writer.Write(ball.vx.RawValue);
+            writer.Write(ball.vy.RawValue);
+        }
+
+        writer.Dispose();
+        stream.Dispose();
+
+        return stream.ToArray();
+    }
+
+    public void Reconcile(byte[] data)
+    {
+        using MemoryStream stream = new MemoryStream(data);
+        using BinaryReader reader = new BinaryReader(stream);
+
+        uint ticks = reader.ReadUInt32();
+        var diff = ticksSinceFire - ticks;
+
+        foreach (var ball in balls)
+        {
+            ball.px = sfloat.FromRaw(reader.ReadUInt32());
+            ball.py = sfloat.FromRaw(reader.ReadUInt32());
+            ball.vx = sfloat.FromRaw(reader.ReadUInt32());
+            ball.vy = sfloat.FromRaw(reader.ReadUInt32());
+        }
+
+        ticksSinceFire = ticks;
+
+        for (int i = 0; i < diff; i++)
+        {
+            FixedTick();
+        }
+
+        reader.Dispose();
+        stream.Dispose();
     }
 }
