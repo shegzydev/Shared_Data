@@ -490,6 +490,7 @@ public class Snooker
         RemoveOverlaps();
 
         ApplyGravity(dt);
+
         ApplyFrictionAll(dt);
     }
 
