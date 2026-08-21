@@ -676,6 +676,9 @@ public class Snooker
                 {
                     Edge b = edges[j];
 
+                    if (a.potted && b.restitution > sfloat.Zero) continue;
+                    if (!a.potted && b.restitution == sfloat.Zero) continue;
+
                     sfloat reach = a.r + b.boundRadius;
                     sfloat dx = a.px - b.midX;
                     sfloat dy = a.py - b.midY;
