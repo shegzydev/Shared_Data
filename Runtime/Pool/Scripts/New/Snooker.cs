@@ -345,8 +345,8 @@ public class Snooker
             var p = rack[i];
             balls[i] = new Ball
             {
-                px = (sfloat)p.x * (sfloat)10,
-                py = (sfloat)p.y * (sfloat)10,
+                px = ((sfloat)p.x - radius) * (sfloat)10,
+                py = ((sfloat)p.y - radius) * (sfloat)10,
                 r = radius * (sfloat)10,
                 number = i
             };
@@ -1053,23 +1053,10 @@ public class Snooker
 
         }
 
-        // --- Penetration correction (push apart if overlapping) ---
-        sfloat rSum = a.r + b.r;
-        sfloat penetration = rSum - dist;
-
-        // if (penetration > (sfloat)0)
-        // {
-        //     a.px -= penetration * nx * (sfloat)0.1;
-        //     a.py -= penetration * ny * (sfloat)0.1;
-
-        //     b.px += penetration * nx * (sfloat)0.1;
-        //     b.py += penetration * ny * (sfloat)0.1;
-        // }
-
         contactHash[a.number].Add((-nx, -ny));
         contactHash[b.number].Add((nx, ny));
 
-        if (velAlongNormal > sfloat.Epsilon) OnBallCollision((a, b));
+        if (velAlongNormal > sfloat.Epsilon && !isReconciling) OnBallCollision((a, b));
     }
 
     void ResolveCollisionEdge(Ball a, Edge edge)
@@ -1140,18 +1127,9 @@ public class Snooker
             a.vy += j * dy;
         }
 
-        // --- Penetration correction ---
-        sfloat penetration = a.r - dist;
-
-        if (penetration > (sfloat)0)
-        {
-            // a.px += dx * penetration;
-            // a.py += dy * penetration;
-        }
-
         contactHash[a.number].Add((dx, dy));
 
-        if (velAlongNormal < -sfloat.Epsilon && edge.restitution > sfloat.Zero) OnEdgeCollision((a, edge));
+        if (velAlongNormal < -sfloat.Epsilon && !isReconciling && edge.restitution > sfloat.Zero) OnEdgeCollision((a, edge));
     }
 
     void ApplyFriction(Ball a, sfloat dt)
@@ -1250,6 +1228,7 @@ public class Snooker
         return stream.ToArray();
     }
 
+    bool isReconciling;
     public void Reconcile(byte[] data)
     {
         if (ticksSinceFire < 2 || !rolling) return;
@@ -1275,10 +1254,12 @@ public class Snooker
 
                 ticksSinceFire = ticks;
 
+                isReconciling = true;
                 for (int i = 0; i < diff; i++)
                 {
                     FixedTick();
                 }
+                isReconciling = false;
             }
         }
     }
