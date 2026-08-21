@@ -1141,7 +1141,7 @@ public class Snooker
 
         contactHash[a.number].Add((dx, dy));
 
-        if (velAlongNormal < -sfloat.Epsilon) OnEdgeCollision((a, edge));
+        if (velAlongNormal < -sfloat.Epsilon && edge.restitution > sfloat.Zero) OnEdgeCollision((a, edge));
     }
 
     void ApplyFriction(Ball a, sfloat dt)
