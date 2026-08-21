@@ -346,7 +346,7 @@ public class Snooker
             balls[i] = new Ball
             {
                 px = ((sfloat)p.x - radius) * (sfloat)10,
-                py = ((sfloat)p.y - radius) * (sfloat)10,
+                py = (sfloat)p.y * (sfloat)10,
                 r = radius * (sfloat)10,
                 number = i
             };
