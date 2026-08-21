@@ -393,7 +393,7 @@ public class Snooker
 
                     var speed = libm.sqrtf(ball.vx * ball.vx + ball.vy * ball.vy);
 
-                    ball.vx = speed;
+                    ball.vx = sfloat.Min(speed, (sfloat)100);
                     ball.vy = sfloat.Zero;
 
                     OnHole((ball, hole));
@@ -1241,6 +1241,7 @@ public class Snooker
             writer.Write(ball.py.RawValue);
             writer.Write(ball.vx.RawValue);
             writer.Write(ball.vy.RawValue);
+            writer.Write(ball.potted);
         }
 
         writer.Dispose();
@@ -1269,6 +1270,7 @@ public class Snooker
                     ball.py = sfloat.FromRaw(reader.ReadUInt32());
                     ball.vx = sfloat.FromRaw(reader.ReadUInt32());
                     ball.vy = sfloat.FromRaw(reader.ReadUInt32());
+                    ball.potted = reader.ReadBoolean();
                 }
 
                 ticksSinceFire = ticks;
