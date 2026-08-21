@@ -545,9 +545,17 @@ public class Snooker
                 }
             }
 
+            sfloat maxTravel = libm.sqrtf(a.vx * a.vx + a.vy * a.vy) * remaining + a.r;
             for (int e = 0; e < edges.Length; e++)
             {
-                if (GetTimeOfImpactEdge(a, edges[e], out sfloat toi) && toi < remaining)
+                Edge b = edges[e];
+
+                sfloat dx = a.px - b.midX;
+                sfloat dy = a.py - b.midY;
+                sfloat reach = maxTravel + b.boundRadius;
+                if (dx * dx + dy * dy > reach * reach) continue;
+
+                if (GetTimeOfImpactEdge(a, b, out sfloat toi) && toi < remaining)
                 {
                     persistentContacts.Add(new CollisionResult
                     { indexA = i, indexB = e, toi = toi, isEdge = true });
@@ -786,6 +794,8 @@ public class Snooker
         for (int i = 0; i < balls.Length; i++)
         {
             Ball a = balls[i];
+            if (a.potted) continue;
+
             for (int j = i + 1; j < balls.Length; j++)
             {
                 Ball b = balls[j];
@@ -1020,7 +1030,7 @@ public class Snooker
         contactHash[a.number].Add((-nx, -ny));
         contactHash[b.number].Add((nx, ny));
 
-        if (velAlongNormal > sfloat.Zero) OnBallCollision((a, b));
+        if (velAlongNormal > sfloat.Epsilon) OnBallCollision((a, b));
     }
 
     void ResolveCollisionEdge(Ball a, Edge edge)
@@ -1093,8 +1103,6 @@ public class Snooker
             sfloat j = -((sfloat)1 + edge.restitution) * velAlongNormal;
             a.vx += j * dx;
             a.vy += j * dy;
-
-            OnEdgeCollision((a, edge));
         }
 
         // --- Penetration correction ---
@@ -1107,6 +1115,8 @@ public class Snooker
         }
 
         contactHash[a.number].Add((dx, dy));
+
+        if (velAlongNormal < -sfloat.Epsilon) OnEdgeCollision((a, edge));
     }
 
     void ApplyFriction(Ball a, sfloat dt)
