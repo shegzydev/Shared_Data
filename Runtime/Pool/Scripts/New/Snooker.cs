@@ -393,7 +393,7 @@ public class Snooker
 
                     var speed = libm.sqrtf(ball.vx * ball.vx + ball.vy * ball.vy);
 
-                    ball.vx = sfloat.Min(speed, (sfloat)100);
+                    ball.vx = sfloat.Min(speed, (sfloat)60);
                     ball.vy = sfloat.Zero;
 
                     OnHole((ball, hole));
