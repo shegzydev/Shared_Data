@@ -72,18 +72,20 @@ public class Snooker
         public int index;
         public sfloat restitution = sfloat.One;
 
+        public sfloat ex, ey;
         public sfloat nx, ny;
         public sfloat tx, ty;
-        public sfloat edgeLen;
+        public sfloat edgeLen, edgeLenSq;
         public sfloat midX, midY;
         public sfloat boundRadius;
 
         public Edge Precompute()
         {
-            sfloat ex = x2 - x1;
-            sfloat ey = y2 - y1;
+            ex = x2 - x1;
+            ey = y2 - y1;
 
-            sfloat edgeLenSq = ex * ex + ey * ey;
+            edgeLenSq = ex * ex + ey * ey;
+
             edgeLen = libm.sqrtf(edgeLenSq);
             boundRadius = edgeLen / (sfloat)2;
 
@@ -550,6 +552,9 @@ public class Snooker
             {
                 Edge b = edges[e];
 
+                if (a.potted && b.restitution > sfloat.Zero) continue;
+                if (!a.potted && b.restitution == sfloat.Zero) continue;
+
                 sfloat dx = a.px - b.midX;
                 sfloat dy = a.py - b.midY;
                 sfloat reach = maxTravel + b.boundRadius;
@@ -715,10 +720,10 @@ public class Snooker
 
     public bool SolveDiscrete(Ball ball, Edge edge)
     {
-        sfloat ex = edge.x2 - edge.x1;
-        sfloat ey = edge.y2 - edge.y1;
+        sfloat ex = edge.ex;
+        sfloat ey = edge.ex;
 
-        sfloat lengthSquared = edge.edgeLen * edge.edgeLen;
+        sfloat lengthSquared = edge.edgeLenSq;
 
         if (lengthSquared == sfloat.Zero)
         {
@@ -819,6 +824,8 @@ public class Snooker
         {
             Ball a = balls[i];
 
+            if (a.potted) continue;
+
             for (int j = i + 1; j < balls.Length; j++)
             {
                 Ball b = balls[j];
@@ -837,10 +844,14 @@ public class Snooker
                 }
             }
 
+
             sfloat maxTravel = libm.sqrtf(a.vx * a.vx + a.vy * a.vy) * dt + a.r;
             for (int j = 0; j < edges.Length; j++)
             {
                 Edge b = edges[j];
+
+                if (a.potted && b.restitution > sfloat.Zero) continue;
+                if (!a.potted && b.restitution == sfloat.Zero) continue;
 
                 sfloat dx = a.px - b.midX;
                 sfloat dy = a.py - b.midY;
@@ -1060,20 +1071,16 @@ public class Snooker
 
     void ResolveCollisionEdge(Ball a, Edge edge)
     {
-        // Edge tangent/normal (unit vectors)
-        sfloat ex = edge.x2 - edge.x1;
-        sfloat ey = edge.y2 - edge.y1;
-        sfloat edgeLenSq = ex * ex + ey * ey;
+        sfloat edgeLen = edge.edgeLen;
 
-        if (edgeLenSq == (sfloat)0)
-            return; // degenerate edge
+        if (edgeLen == (sfloat)0)
+            return;
 
-        sfloat edgeLen = libm.sqrtf(edgeLenSq);
-        sfloat tx = ex / edgeLen;
-        sfloat ty = ey / edgeLen;
+        sfloat tx = edge.tx;
+        sfloat ty = edge.ty;
 
-        sfloat nx = -ty;
-        sfloat ny = tx;
+        sfloat nx = edge.nx;
+        sfloat ny = edge.ny;
 
         // Ball relative to edge start
         sfloat rx = a.px - edge.x1;
