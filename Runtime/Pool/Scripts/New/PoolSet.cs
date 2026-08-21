@@ -357,6 +357,8 @@ namespace PoolEngine
             {
                 Logger.Log("No own ball pocketed → next player");
                 Next();
+                ResetParams();
+                return;
             }
             else
             {
