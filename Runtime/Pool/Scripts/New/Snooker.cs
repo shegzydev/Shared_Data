@@ -724,7 +724,7 @@ public class Snooker
     public bool SolveDiscrete(Ball ball, Edge edge)
     {
         sfloat ex = edge.ex;
-        sfloat ey = edge.ex;
+        sfloat ey = edge.ey;
 
         sfloat lengthSquared = edge.edgeLenSq;
 
